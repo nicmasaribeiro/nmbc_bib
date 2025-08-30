@@ -39,6 +39,8 @@ from flask import render_template, abort
 from flask_login import login_required
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import relationship, backref
+
 
 
 # -------------------------
@@ -208,6 +210,7 @@ class Topic(Base):
     revision: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    page = relationship("Page", backref=backref("topics", cascade="all,delete-orphan", order_by="Topic.order_index"))
     attachments: Mapped[List["TopicAttachment"]] = relationship(
         back_populates="topic", cascade="all,delete-orphan", lazy="selectin"
     )
@@ -1639,13 +1642,20 @@ def on_topic_update(data):
 def about():
     return "Bibliography Tool — collaborative, condensed research pages."
 
+# app.py
+import os
+
+port = int(os.environ.get("PORT", 8888))
+
 if __name__ == "__main__":
-    # Development server with WebSockets
- socketio.run(
-        app,
-        host="127.0.0.1",
-        port=5000,
-        debug=False,
-        use_reloader=False,          # 👈 IMPORTANT: single process
-        allow_unsafe_werkzeug=True   # (needed on newer Werkzeug)
-    )
+    try:
+        # If using Flask-SocketIO
+        socketio.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+            allow_unsafe_werkzeug=True,  # dev server in prod (temporary)
+        )
+    except NameError:
+        # Plain Flask
+        app.run(host="0.0.0.0", port=port)
