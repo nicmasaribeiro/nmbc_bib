@@ -1,0 +1,24 @@
+<form action="{{ url_for('citation_add', project_id=project.id) }}" method="post" class="grid2">
+  <input name="key" placeholder="Key e.g. smith2020deep">
+  <input name="title" placeholder="Title">
+  <input name="authors" placeholder="Authors (Last, First; ...)">
+  <input name="venue" placeholder="Venue/Journal/Conf">
+  <input name="year" placeholder="Year">
+  <input name="doi" placeholder="DOI">
+  <input name="url" placeholder="URL">
+  <input name="tags" placeholder="tags,comma,separated">
+  <textarea name="abstract" placeholder="Abstract"></textarea>
+  <button>Add citation</button>
+</form>
+<div class="row">
+  Export: 
+  <a href="{{ url_for('citations_export', project_id=project.id, fmt='apa') }}">APA</a> ·
+  <a href="{{ url_for('citations_export', project_id=project.id, fmt='mla') }}">MLA</a> ·
+  <a href="{{ url_for('citations_export', project_id=project.id, fmt='chicago') }}">Chicago</a> ·
+  <a href="{{ url_for('citations_export', project_id=project.id, fmt='bibtex') }}">BibTeX</a>
+</div>
+<ul class="list">
+  {% for c in citations %}
+  <li><strong>{{ c.key or ('#'+c.id|string) }}</strong> — {{ c.title }} <small>{{ c.year }}</small></li>
+  {% endfor %}
+</ul>

@@ -1,0 +1,421 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-wrap">
+  <!-- Page header -->
+  <header class="page-header">
+    <h2 class="title">
+      <span id="page-title">{{ page.title }}</span>
+      <form action="{{ url_for('page_rename', project_id=project.id, page_id=page.id) }}"
+            method="post" class="form-inline" aria-label="Rename page">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+        <label class="visually-hidden" for="new-title">New title</label>
+        <input id="new-title" name="title" value="{{ page.title }}" maxlength="180" required>
+        <button class="btn">Rename</button>
+      </form>
+    </h2>
+
+    <form action="{{ url_for('page_delete', project_id=project.id, page_id=page.id) }}"
+          method="post" onsubmit="return confirm('Delete this page and all its topics?')"
+          aria-label="Delete page" class="delete-form">
+      {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+      <button class="btn danger">Delete Page</button>
+    </form>
+  </header>
+
+  <div class="grid two-col">
+    <!-- Left column: editor + attachments -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Editor</h3>
+        <div class="row gap8">
+          <button id="saveBtn" class="btn outline">Save now</button>
+          <span class="muted small">Revision <span id="rev">{{ page.revision }}</span></span>
+          <span id="save-status" class="muted small" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <div id="condensed-wrap" class="editor-wrap">
+        <div id="condensed-editor" class="editor" contenteditable="true" spellcheck="true" aria-label="Rich text editor">
+          {{ page.content_html|safe }}
+        </div>
+      </div>
+
+      <div class="card-section">
+        <h3 class="h3-inline">Attachments</h3>
+        <form action="{{ url_for('upload', project_id=project.id, page_id=page.id) }}"
+              method="post" enctype="multipart/form-data" class="form-inline">
+          {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+          <input type="file" name="file" required>
+          <input name="label" placeholder="Attachment label (optional)">
+          <button class="btn">Attach</button>
+        </form>
+
+        {% if attachments and attachments|length>0 %}
+        <ul class="item-list mt8">
+          {% for a in attachments %}
+          {% set sha = a.blob.sha256 %}
+          <li class="item">
+            <a target="_blank" class="item-link"
+               href="{{ url_for('serve_blob', sha_prefix=sha[:2], sha=sha) }}">
+              {{ a.label or a.blob.filename }}
+            </a>
+            <span class="pill">{{ a.blob.size }} bytes</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No attachments yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Right column: annotations + topics + citations -->
+    <aside class="card">
+      <div class="card-section">
+        <h3>Annotations</h3>
+        <form method="post" action="{{ url_for('annotate', project_id=project.id, page_id=page.id) }}" class="stack">
+          {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+          <textarea name="text" placeholder="Add annotation…" rows="3" required></textarea>
+          <button class="btn">Add</button>
+        </form>
+
+        {% if annotations and annotations|length>0 %}
+        <ul class="note-list">
+          {% for an in annotations %}
+          <li class="note">
+            <div class="note-head">
+              <strong>{{ an.author.email }}</strong>
+              <small class="muted">{{ an.created_at }}</small>
+            </div>
+            <div class="note-body">{{ an.text }}</div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No annotations yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="card-section">
+        <div class="card-header tight">
+          <h3>Topics</h3>
+          <form action="{{ url_for('topic_create', project_id=project.id, page_id=page.id) }}" method="post" class="form-inline">
+            {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+            <input name="title" placeholder="New topic title" required maxlength="180">
+            <button class="btn">Create</button>
+          </form>
+        </div>
+
+        {% if page.topics and page.topics|length>0 %}
+        <ul id="topics-list" class="tile-list dnd" aria-label="Reorder topics by drag and drop">
+          {% for t in page.topics %}
+          <li class="tile" draggable="true" data-id="{{ t.id }}" tabindex="0" aria-grabbed="false">
+            <a class="item-link" href="{{ url_for('topic_view', project_id=project.id, page_id=page.id, topic_id=t.id) }}">{{ t.title }}</a>
+            <small class="muted">#{{ t.id }}</small>
+            <span class="drag-hint" aria-hidden="true">⋮⋮</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No topics yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="card-section">
+        <h3>Page Citations</h3>
+        <form action="{{ url_for('citation_add', project_id=project.id) }}" method="post" class="grid2">
+          {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+          <input type="hidden" name="page_id" value="{{ page.id }}">
+          <input name="key" placeholder="Key">
+          <input name="title" placeholder="Title">
+          <input name="authors" placeholder="Authors">
+          <input name="venue" placeholder="Venue">
+          <input name="year" placeholder="Year" inputmode="numeric" pattern="[0-9]{4}">
+          <input name="doi" placeholder="DOI">
+          <input name="url" placeholder="URL">
+          <button class="btn">Add</button>
+        </form>
+
+        {% if citations and citations|length>0 %}
+        <ul class="item-list mt8">
+          {% for c in citations %}
+          <li class="item">
+            <span class="mono">{{ c.key or ('#' ~ c.id|string) }}</span>
+            <span class="sep">—</span>
+            <span>{{ c.title }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No citations yet.</div>
+        {% endif %}
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- Styles -->
+<style>
+  :root{
+    --bg:#0b0e11; --card:#121826; --text:#e6edf3; --muted:#9aa7b2; --border:#1c2433;
+    --brand:#1f6feb; --brand-2:#1557c0; --danger:#b3261e;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f7f7fb; --card:#fff; --text:#0f172a; --muted:#6b7280; --border:#e5e7eb; --brand:#1f6feb; --brand-2:#1557c0; --danger:#b3261e; }
+  }
+  .page-wrap{ display:flex; flex-direction:column; gap:16px; }
+  .page-header{
+    display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap;
+    background:var(--card); border:1px solid var(--border); padding:12px 14px; border-radius:14px;
+  }
+  .title{ margin:0; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .delete-form{ margin-left:auto; }
+  .grid.two-col{ display:grid; grid-template-columns: 1.2fr .8fr; gap:16px; }
+  @media (max-width: 1000px){ .grid.two-col{ grid-template-columns: 1fr; } }
+
+  .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .card-header{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border); }
+  .card-header.tight{ padding-bottom:8px; }
+  .card-section{ padding:12px 14px; border-top:1px solid var(--border); }
+  .h3-inline{ display:flex; align-items:center; gap:10px; margin:0 0 8px 0; }
+
+  .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .gap8{ gap:8px; }
+  .stack{ display:flex; flex-direction:column; gap:8px; }
+
+  input[type="text"], input[type="email"], input:not([type]), select, textarea{
+    background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:10px;
+    padding:8px 10px; outline:none; min-width:220px;
+  }
+  textarea{ width:100%; resize:vertical; }
+  input:focus, select:focus, textarea:focus{ border-color:var(--brand); box-shadow:0 0 0 3px rgba(31,111,235,.18); }
+
+  .btn{ background:var(--brand); color:#fff; border:none; border-radius:10px; padding:8px 12px; cursor:pointer; }
+  .btn:hover{ opacity:.95; }
+  .btn.outline{ background:transparent; color:var(--text); border:1px solid var(--border); }
+  .btn.danger{ background:var(--danger); }
+  .muted{ color:var(--muted); }
+  .small{ font-size:.9rem; }
+  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+  .editor-wrap{ padding:12px 14px; }
+  .editor{
+    min-height:42vh; border:1px dashed var(--border); border-radius:12px; padding:12px;
+    background:linear-gradient(0deg, transparent, transparent), var(--bg);
+  }
+  .editor:focus{ border-color:var(--brand); box-shadow:inset 0 0 0 2px rgba(31,111,235,.15); }
+
+  .item-list{ list-style:none; margin:0; padding:0; }
+  .item{ display:flex; align-items:center; gap:10px; justify-content:flex-start; padding:10px 0; border-top:1px solid var(--border); }
+  .item:first-child{ border-top:none; }
+  .item-link{ color:var(--text); text-decoration:none; font-weight:600; }
+  .item-link:hover{ text-decoration:underline; }
+  .pill{ font-size:.78rem; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .sep{ opacity:.6; margin:0 4px; }
+
+  .note-list{ list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .note{ border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,.02); }
+  .note-head{ display:flex; gap:10px; align-items:center; justify-content:space-between; }
+  .note-body{ margin-top:6px; white-space:pre-wrap; }
+
+  .tile-list{ list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .tile{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:rgba(255,255,255,.02);
+  }
+  .tile[aria-grabbed="true"]{ outline:2px dashed var(--brand); }
+  .drag-hint{ opacity:.35; font-size:1.1rem; }
+
+  .empty{ padding:10px; border:1px dashed var(--border); border-radius:10px; color:var(--muted); }
+  .visually-hidden{
+    position:absolute !important; height:1px; width:1px; overflow:hidden; clip:rect(1px,1px,1px,1px); white-space:nowrap;
+  }
+
+  #save-status.saving::after{ content:"Saving…"; }
+  #save-status.saved::after{ content:"Saved"; }
+  #save-status.conflict::after{ content:"Updated from server"; }
+  #save-status.error::after{ content:"Save failed"; }
+  .mt8{ margin-top:8px; }
+</style>
+
+<!-- Scripts -->
+<script>
+  // Config
+  const projectId = {{ project.id }};
+  const pageId = {{ page.id }};
+
+  // Elements
+  const editor = document.getElementById('condensed-editor');
+  const saveBtn = document.getElementById('saveBtn');
+  const revEl = document.getElementById('rev');
+  const saveStatus = document.getElementById('save-status');
+
+  let revision = parseInt(revEl?.textContent || "0", 10) || 0;
+  let saving = false, dirty = false, saveTimer = null;
+
+  function setStatus(cls){
+    if(!saveStatus) return;
+    saveStatus.className = `muted small ${cls||""}`;
+  }
+
+  function queueSave(){
+    dirty = true;
+    setStatus('saving');
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(doSave, 600);
+  }
+
+  function doSave(){
+    if (saving || !dirty) return;
+    saving = true; dirty = false;
+
+    // Basic paste sanitizer: block scripts (defense-in-depth; server should sanitize too)
+    // (Already in DOM; this just ensures we don't persist rogue <script> tags)
+    editor.querySelectorAll('script').forEach(n => n.remove());
+
+    fetch(`{{ url_for('save_html', project_id=project.id, page_id=page.id) }}`, {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      body: new URLSearchParams({
+        content_html: editor.innerHTML,
+        revision: revision
+      })
+    }).then(async (r) => {
+      if (r.status === 409){
+        const data = await r.json();
+        editor.innerHTML = data.server_html;
+        revision = data.server_revision;
+        if (revEl) revEl.textContent = revision;
+        setStatus('conflict');
+        return;
+      }
+      if (!r.ok){ throw new Error('save failed'); }
+      const data = await r.json();
+      if (data.status === 'ok'){
+        revision = data.revision;
+        if (revEl) revEl.textContent = revision;
+        setStatus('saved');
+      } else {
+        setStatus('error');
+      }
+    }).catch(() => setStatus('error'))
+      .finally(() => { saving = false; });
+  }
+
+  // Debounced autosave
+  editor.addEventListener('input', queueSave);
+  saveBtn.addEventListener('click', (e) => { e.preventDefault(); doSave(); });
+
+  // Clean paste (strip scripts/styles)
+  editor.addEventListener('paste', (e) => {
+    if (!e.clipboardData) return;
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
+    if (html){
+      e.preventDefault();
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      tmp.querySelectorAll('script,style').forEach(n => n.remove());
+      document.execCommand('insertHTML', false, tmp.innerHTML);
+    } else if (text){
+      // allow default plaintext paste
+    }
+  });
+
+  // Drag & drop topics (with live reorder POST)
+  (function(){
+    const list = document.getElementById('topics-list');
+    if (!list) return;
+
+    let dragEl = null;
+
+    list.addEventListener('dragstart', (e) => {
+      const li = e.target.closest('.tile'); if (!li) return;
+      dragEl = li; li.setAttribute('aria-grabbed','true');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', li.dataset.id);
+    });
+
+    list.addEventListener('dragend', () => {
+      if (dragEl) dragEl.setAttribute('aria-grabbed','false');
+      dragEl = null;
+    });
+
+    list.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const li = e.target.closest('.tile');
+      if (!li || li === dragEl) return;
+      const rect = li.getBoundingClientRect();
+      const next = (e.clientY - rect.top) > (rect.height/2);
+      list.insertBefore(dragEl, next ? li.nextSibling : li);
+    });
+
+    list.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const order = [...list.querySelectorAll('.tile')].map(li => li.dataset.id);
+      try{
+        await fetch(`{{ url_for('topics_reorder', project_id=project.id, page_id=page.id) }}`, {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({order})
+        });
+      }catch(_){}
+    });
+
+    // Keyboard fallback: Ctrl/Cmd + ArrowUp/Down to reorder focused tile
+    list.addEventListener('keydown', async (e) => {
+      const li = e.target.closest('.tile'); if (!li) return;
+      const isUp = (e.key === 'ArrowUp' && (e.ctrlKey || e.metaKey));
+      const isDown = (e.key === 'ArrowDown' && (e.ctrlKey || e.metaKey));
+      if (!isUp && !isDown) return;
+
+      e.preventDefault();
+      const sib = isUp ? li.previousElementSibling : li.nextElementSibling;
+      if (!sib) return;
+      list.insertBefore(isUp ? li : sib, isUp ? sib : li);
+
+      const order = [...list.querySelectorAll('.tile')].map(x => x.dataset.id);
+      try{
+        await fetch(`{{ url_for('topics_reorder', project_id=project.id, page_id=page.id) }}`, {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({order})
+        });
+      }catch(_){}
+    });
+  })();
+
+  // Single Socket.IO hookup (project + page rooms)
+  (function(){
+    if (!window.io) return;
+    const socket = io();
+    socket.emit("join_project", { project_id: projectId });
+    socket.emit("join_page", { project_id: projectId, page_id: pageId });
+
+    socket.on("page_title_updated", (msg) => {
+      if (msg.page_id === pageId) {
+        document.getElementById("page-title").textContent = msg.title;
+        document.getElementById("new-title").value = msg.title;
+      }
+    });
+
+    socket.on("page_broadcast", (msg) => {
+      if (msg.page_id !== pageId) return;
+      if (msg.revision > revision){
+        editor.innerHTML = msg.html;
+        revision = msg.revision;
+        if (revEl) revEl.textContent = revision;
+        setStatus('conflict');
+      }
+    });
+
+    ["file_added","annotation_added","topic_added"].forEach(ev => {
+      socket.on(ev, (msg) => { if (msg.page_id === pageId) location.reload(); });
+    });
+
+    socket.on("topics_reordered", (msg) => {
+      if (msg.page_id === pageId) { /* optional toast */ }
+    });
+  })();
+</script>
+{% endblock %}

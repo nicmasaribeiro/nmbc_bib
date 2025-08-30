@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ page.title }} · <em>Topic:</em> {{ topic.title }}</h2>
+
+<div class="row" style="gap:8px; flex-wrap:wrap; align-items:center">
+  <a class="buttonlike" href="{{ url_for('page_view', project_id=project.id, page_id=page.id) }}">← Back to Page</a>
+  <a class="buttonlike" href="{{ url_for('topic_codepad', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" target="_blank">Open Code Pad ↗</a>
+  <span class="muted">Revision <span id="rev">{{ topic.revision }}</span></span>
+</div>
+
+<div class="grid2" style="gap:14px">
+  <div>
+    <h3>Notes (Markdown + LaTeX)</h3>
+    <textarea id="md-src">{{ topic.content_md }}</textarea>
+    <div class="muted" id="save-status" style="margin-top:6px;">Saved</div>
+  </div>
+
+  <div>
+    <h3>Live Preview</h3>
+    <div id="preview" class="card" style="min-height:50vh; padding:14px; overflow:auto"></div>
+  </div>
+</div>
+
+<hr>
+
+<h3>Attachments</h3>
+<form action="{{ url_for('topic_upload', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" method="post" enctype="multipart/form-data" class="row" style="gap:8px; flex-wrap:wrap">
+  <input type="file" name="file" required>
+  <input name="label" placeholder="Label (optional)">
+  <button>Attach</button>
+</form>
+
+<ul class="list">
+  {% for a in attachments %}
+    {% set sha = a.blob.sha256 %}
+    <li>
+      <a target="_blank" href="{{ url_for('serve_blob', sha_prefix=sha[:2], sha=sha) }}">
+        {{ a.label or a.blob.filename }}
+      </a>
+      <small>({{ a.blob.size }} bytes)</small>
+    </li>
+  {% endfor %}
+</ul>
+
+<hr>
+
+<h3>Annotations</h3>
+<form method="post" action="{{ url_for('topic_annotate', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" class="row" style="gap:8px">
+  <textarea name="text" placeholder="Add annotation..." rows="3" style="width:100%"></textarea>
+  <button>Add</button>
+</form>
+<ul class="list">
+  {% for an in annotations %}
+    <li><strong>{{ an.author.email }}</strong> <small>{{ an.created_at }}</small><br>{{ an.text }}</li>
+  {% endfor %}
+</ul>
+
+<!-- ===== Styles ===== -->
+<style>
+  .buttonlike { background:#1f6feb; color:#fff; border:none; padding:8px 14px; border-radius:10px; text-decoration:none; display:inline-block; }
+  .buttonlike:hover { opacity:.92; }
+  .muted { opacity:.8 }
+  .editor-toolbar { border-radius:10px 10px 0 0 !important; }
+  .EasyMDEContainer .CodeMirror { border-radius:0 0 10px 10px; min-height:50vh; }
+</style>
+
+<!-- ===== EasyMDE (Markdown editor) ===== -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde@2.18.0/dist/easymde.min.css">
+<script src="https://cdn.jsdelivr.net/npm/easymde@2.18.0/dist/easymde.min.js"></script>
+
+<!-- ===== MathJax for LaTeX ===== -->
+<script>
+  window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }, svg: { fontCache: 'global' } };
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+<!-- ===== highlight.js for fenced code ===== -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', ()=>hljs.highlightAll());</script>
+
+<!-- ===== Mermaid for diagrams ===== -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: false, theme: 'dark' });</script>
+
+<script>
+(function(){
+  const revEl = document.getElementById('rev');
+  const statusEl = document.getElementById('save-status');
+  let revision = parseInt(revEl.textContent || '0', 10) || 0;
+  let saveTimer = null, saving = false, dirty = false;
+
+  const mde = new EasyMDE({
+    element: document.getElementById('md-src'),
+    autosave: { enabled: false },
+    spellChecker: false,
+    placeholder: "Write Markdown with $\\LaTeX$…\n\n```python\n# code blocks are highlighted in preview\n```",
+    renderingConfig: { singleLineBreaks: false, codeSyntaxHighlighting: true },
+    toolbar: [
+      "bold","italic","heading","|","quote","unordered-list","ordered-list",
+      "|","link","image","table","code","|","side-by-side","fullscreen","|",
+      {
+        name:"mermaid",
+        action: ()=> {
+          const tmpl = "```mermaid\ngraph TD;\n  A-->B;\n```";
+          mde.codemirror.replaceSelection(tmpl);
+        },
+        className:"fa fa-project-diagram",
+        title:"Insert Mermaid"
+      },
+      {
+        name:"save",
+        action: ()=>doSave(true),
+        className:"fa fa-save",
+        title:"Save"
+      }
+    ],
+    previewRender: (plainText, previewEl) => {
+      // use EasyMDE internal renderer first
+      const html = EasyMDE.prototype.markdown(plainText);
+      previewEl.innerHTML = html;
+
+      // Syntax highlight
+      previewEl.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
+
+      // Mermaid blocks
+      const mermaidBlocks = previewEl.querySelectorAll('code.language-mermaid');
+      mermaidBlocks.forEach((codeEl) => {
+        const container = document.createElement('div');
+        container.className = 'mermaid';
+        container.textContent = codeEl.textContent;
+        codeEl.parentElement.replaceWith(container);
+      });
+      try { mermaid.run({ nodes: previewEl }); } catch(e){}
+
+      // MathJax
+      if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([previewEl]);
+
+      return previewEl.innerHTML;
+    }
+  });
+
+  // Image paste/upload → POST to server, then insert Markdown image link
+  mde.codemirror.on('paste', async (cm, e) => {
+    const files = (e.clipboardData || {}).files || [];
+    if (!files.length) return;
+    e.preventDefault();
+    const form = new FormData();
+    form.append('file', files[0]);
+    const r = await fetch("{{ url_for('topic_paste_image', project_id=project.id, page_id=page.id, topic_id=topic.id) }}", { method:"POST", body: form });
+    const d = await r.json().catch(()=>({}));
+    if (d.url){
+      mde.codemirror.replaceSelection(`![pasted image](${d.url})`);
+    }
+  });
+
+  function markDirty(){ dirty = true; statusEl.textContent = "Editing…"; }
+  function queueSave(){
+    markDirty();
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>doSave(false), 600);
+  }
+  async function doSave(explicit){
+    if (saving || (!dirty && !explicit)) return;
+    saving = true; dirty = false;
+    const md = mde.value();
+    const r = await fetch("{{ url_for('topic_save_md', project_id=project.id, page_id=page.id, topic_id=topic.id) }}", {
+      method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body:new URLSearchParams({content_md: md, revision})
+    });
+    if (r.status === 409){
+      const d = await r.json();
+      mde.value(d.server_md);
+      revision = d.server_revision;
+      revEl.textContent = revision;
+      statusEl.textContent = "Reloaded newest revision";
+      mde.codemirror.refresh();
+    } else {
+      const d = await r.json();
+      if (d && d.revision !== undefined){
+        revision = d.revision;
+        revEl.textContent = revision;
+        statusEl.textContent = "Saved";
+      } else {
+        statusEl.textContent = "Saved";
+      }
+    }
+    saving = false;
+  }
+
+  mde.codemirror.on('change', ()=>{ queueSave(); mde.codemirror.save(); });
+  // initial render
+  document.getElementById('preview').innerHTML = mde.options.previewRender(mde.value(), document.getElementById('preview'));
+  mde.codemirror.on('change', ()=> {
+    const prev = document.getElementById('preview');
+    prev.innerHTML = mde.options.previewRender(mde.value(), prev);
+  });
+})();
+</script>
+{% endblock %}

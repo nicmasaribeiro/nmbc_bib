@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Your projects</h2>
+<form action="{{ url_for('project_create') }}" method="post" class="row">
+  <input name="name" placeholder="New project name" required>
+  <button>Create</button>
+</form>
+
+<div class="grid">
+  {% for p in my_projects %}
+  <a class="card" href="{{ url_for('project_view', project_id=p.id) }}">
+    <strong>{{ p.name }}</strong>
+    <small>Created {{ p.created_at.date() }}</small>
+  </a>
+  {% endfor %}
+</div>
+
+<h3>Shared with you</h3>
+<div class="grid">
+  {% for p in shared_projects %}
+  <a class="card" href="{{ url_for('project_view', project_id=p.id) }}">
+    <strong>{{ p.name }}</strong>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

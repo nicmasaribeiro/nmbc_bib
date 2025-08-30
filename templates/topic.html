@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="topic-wrap">
+  <!-- Header -->
+  <header class="topic-header">
+    <div class="title-group">
+      <h2 class="title">{{ page.title }} <span class="muted">·</span> <em>Topic:</em> {{ topic.title }}</h2>
+      <div class="meta">
+        <span class="pill">Page #{{ page.id }}</span>
+        <span class="pill">Topic #{{ topic.id }}</span>
+      </div>
+    </div>
+
+    <form action="{{ url_for('topic_delete', project_id=project.id, page_id=page.id, topic_id=topic.id) }}"
+          method="post" onsubmit="return confirm('Delete this topic?')" class="form-inline">
+      {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+      <button class="btn danger">Delete Topic</button>
+    </form>
+  </header>
+
+  <div class="grid two-col">
+    <!-- Left: Markdown / LaTeX -->
+    <section class="card">
+      <div class="card-header">
+        <h3>Markdown / LaTeX</h3>
+        <div class="row gap8">
+          <button id="saveMdBtn" class="btn outline">Save now</button>
+          <span class="muted small">Revision <span id="rev">{{ topic.revision }}</span></span>
+          <span id="save-status" class="muted small" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <div class="card-section">
+        <div class="grid split">
+          <div class="stack">
+            <label class="muted small" for="md">Editor</label>
+            <textarea id="md" placeholder="Write Markdown with $\\LaTeX$…">{{ topic.content_md }}</textarea>
+          </div>
+          <div class="stack">
+            <div class="row between">
+              <span class="muted small">Preview</span>
+              <span class="muted small">MathJax enabled</span>
+            </div>
+            <div id="preview" class="preview card-lite"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-section">
+        <div class="row between">
+          <h3 class="h3-inline">Topic Attachments</h3>
+          <form action="{{ url_for('topic_upload', project_id=project.id, page_id=page.id, topic_id=topic.id) }}"
+                method="post" enctype="multipart/form-data" class="form-inline">
+            {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+            <input type="file" name="file" required>
+            <input name="label" placeholder="Label (optional)">
+            <button class="btn">Attach</button>
+          </form>
+        </div>
+
+        {% if attachments and attachments|length>0 %}
+        <ul class="item-list mt8">
+          {% for a in attachments %}
+          {% set sha = a.blob.sha256 %}
+          <li class="item">
+            <a target="_blank" class="item-link" href="{{ url_for('serve_blob', sha_prefix=sha[:2], sha=sha) }}">
+              {{ a.label or a.blob.filename }}
+            </a>
+            <span class="pill">{{ a.blob.size }} bytes</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No attachments yet.</div>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- Right: Code cells + annotations -->
+    <aside class="card">
+      <div class="card-section">
+        <div class="row between">
+          <h3 class="h3-inline">Code Cells</h3>
+          <div class="row gap8">
+            <a class="btn ghost" href="{{ url_for('topic_code_workspace', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" target="_blank">
+              Open Code Workspace ↗
+            </a>
+            <form action="{{ url_for('codecell_create', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" method="post" class="form-inline">
+              {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+              <button class="btn">Add cell</button>
+            </form>
+          </div>
+        </div>
+
+        <div id="cells">
+          {% if codecells and codecells|length>0 %}
+          {% for c in codecells %}
+          <div class="card soft mb12">
+            <label class="muted small" for="code-{{ c.id }}">Cell #{{ c.id }}</label>
+            <textarea id="code-{{ c.id }}" class="codearea" placeholder="# Python or C++">{{ c.code }}</textarea>
+            <div class="row gap8 wrap">
+              <button type="button" class="btn outline" onclick="saveCell{{ c.id }}()">Save</button>
+              <form action="{{ url_for('codecell_delete', project_id=project.id, page_id=page.id, topic_id=topic.id, cell_id=c.id) }}"
+                    method="post" onsubmit="return confirm('Delete this cell?')" class="form-inline">
+                {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+                <button class="btn danger">Delete</button>
+              </form>
+              <span id="cell-status-{{ c.id }}" class="muted small" aria-live="polite"></span>
+            </div>
+          </div>
+          <script>
+            function saveCell{{ c.id }}(){
+              const el = document.getElementById("code-{{ c.id }}");
+              const status = document.getElementById("cell-status-{{ c.id }}");
+              if(status) status.textContent = "Saving…";
+              fetch("{{ url_for('codecell_save', project_id=project.id, page_id=page.id, topic_id=topic.id, cell_id=c.id) }}", {
+                method:"POST",
+                headers:{"Content-Type":"application/x-www-form-urlencoded"},
+                body:new URLSearchParams({code: el.value})
+              }).then(r=>r.json()).then(d=>{
+                if(status) status.textContent = (d && d.status==="ok") ? "Saved" : "Save failed";
+                setTimeout(()=>{ if(status) status.textContent=""; }, 1200);
+              }).catch(()=>{
+                if(status) status.textContent = "Save failed";
+                setTimeout(()=>{ if(status) status.textContent=""; }, 1200);
+              });
+            }
+          </script>
+          {% endfor %}
+          {% else %}
+          <div class="empty">No code cells yet. Use “Add cell”.</div>
+          {% endif %}
+        </div>
+
+        <div class="row gap8 mt8">
+          <a class="btn ghost" href="{{ url_for('topic_code_download', project_id=project.id, page_id=page.id, topic_id=topic.id) }}">
+            Download all code as .py
+          </a>
+          <small class="muted">Run the script in your environment (e.g., venv).</small>
+        </div>
+      </div>
+
+      <div class="card-section">
+        <h3>Topic Annotations</h3>
+        <form method="post" action="{{ url_for('topic_annotate', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" class="stack">
+          {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+          <textarea name="text" placeholder="Add annotation…" rows="3" required></textarea>
+          <button class="btn">Add</button>
+        </form>
+
+        {% if annotations and annotations|length>0 %}
+        <ul class="note-list">
+          {% for an in annotations %}
+          <li class="note">
+            <div class="note-head">
+              <strong>{{ an.author.email }}</strong>
+              <small class="muted">{{ an.created_at }}</small>
+            </div>
+            <div class="note-body">{{ an.text }}</div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No annotations yet.</div>
+        {% endif %}
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script>
+  window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }, svg: { fontCache: 'global' } };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+<!-- Logic -->
+<script>
+  // Elements
+  const mdEl = document.getElementById('md');
+  const preview = document.getElementById('preview');
+  const revEl = document.getElementById('rev');
+  const saveBtn = document.getElementById('saveMdBtn');
+  const saveStatus = document.getElementById('save-status');
+
+  let revision = parseInt(revEl?.textContent || "0", 10) || 0;
+  let saveTimer = null, saving = false, dirty = false;
+
+  function setSaveStatus(state){
+    if (!saveStatus) return;
+    const map = { saving:"Saving…", saved:"Saved", conflict:"Updated from server", error:"Save failed" };
+    saveStatus.textContent = map[state] || "";
+  }
+
+  function renderPreview() {
+    const raw = mdEl.value || "";
+    const html = DOMPurify.sanitize(marked.parse(raw));
+    preview.innerHTML = html;
+    if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([preview]);
+  }
+
+  function queueSave(){
+    dirty = true;
+    setSaveStatus("saving");
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(doSave, 600);
+  }
+
+  function doSave(){
+    if (saving || !dirty) return;
+    saving = true; dirty = false;
+
+    fetch("{{ url_for('topic_save_md', project_id=project.id, page_id=page.id, topic_id=topic.id) }}", {
+      method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body:new URLSearchParams({content_md: mdEl.value, revision})
+    }).then(async r=>{
+      if (r.status===409){
+        const d = await r.json();
+        mdEl.value = d.server_md;
+        revision = d.server_revision;
+        revEl.textContent = revision;
+        renderPreview();
+        setSaveStatus("conflict");
+        return;
+      }
+      if (!r.ok) throw new Error("save failed");
+      const d = await r.json();
+      if (d.status==="ok"){
+        revision = d.revision; revEl.textContent = revision;
+        setSaveStatus("saved");
+        setTimeout(()=>setSaveStatus(""), 1200);
+      } else {
+        setSaveStatus("error");
+      }
+    }).catch(()=> setSaveStatus("error"))
+      .finally(()=> saving=false);
+  }
+
+  // Live edit
+  mdEl.addEventListener('input', ()=>{ renderPreview(); queueSave(); });
+  saveBtn.addEventListener('click', (e)=>{ e.preventDefault(); doSave(); });
+
+  // Keyboard shortcut: Ctrl/Cmd+S to save
+  document.addEventListener('keydown', (e) => {
+    const isSave = (e.key === 's' || e.key === 'S') && (e.ctrlKey || e.metaKey);
+    if (isSave){
+      e.preventDefault();
+      doSave();
+    }
+  });
+
+  // Initial preview
+  renderPreview();
+</script>
+
+<!-- Styles -->
+<style>
+  :root{
+    --bg:#0b0e11; --card:#121826; --text:#e6edf3; --muted:#9aa7b2; --border:#1c2433;
+    --brand:#1f6feb; --brand-2:#1557c0; --danger:#b3261e;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f7f7fb; --card:#fff; --text:#0f172a; --muted:#6b7280; --border:#e5e7eb; --brand:#1f6feb; --brand-2:#1557c0; --danger:#b3261e; }
+  }
+
+  .topic-wrap{ display:flex; flex-direction:column; gap:16px; }
+  .topic-header{
+    display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap;
+    background:var(--card); border:1px solid var(--border); padding:12px 14px; border-radius:14px;
+  }
+  .title-group{ display:flex; flex-direction:column; gap:6px; }
+  .title{ margin:0; }
+  .meta{ display:flex; gap:8px; flex-wrap:wrap; }
+  .muted{ color:var(--muted); }
+  .small{ font-size:.9rem; }
+  .pill{ font-size:.78rem; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+
+  .grid.two-col{ display:grid; grid-template-columns: 1.2fr .8fr; gap:16px; }
+  @media (max-width: 1000px){ .grid.two-col{ grid-template-columns: 1fr; } }
+
+  .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .card-header{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border); }
+  .card-section{ padding:12px 14px; }
+  .card.soft{ border-radius:12px; border:1px solid var(--border); background:rgba(255,255,255,.02); padding:12px; }
+  .card-lite{
+    background:var(--bg); border:1px dashed var(--border); border-radius:10px; padding:12px; min-height:40vh; overflow:auto;
+  }
+
+  .row{ display:flex; gap:10px; align-items:center; }
+  .row.gap8{ gap:8px; }
+  .row.between{ justify-content:space-between; }
+  .wrap{ flex-wrap:wrap; }
+  .stack{ display:flex; flex-direction:column; gap:8px; }
+  .grid.split{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  @media (max-width: 900px){ .grid.split{ grid-template-columns: 1fr; } }
+
+  textarea, input[type="text"], input[type="email"], input:not([type]){
+    background:var(--bg); color:var(--text); border:1px solid var(--border);
+    border-radius:10px; padding:10px; outline:none;
+  }
+  textarea#md{ min-height:40vh; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  .codearea{ min-height:120px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+  textarea:focus, input:focus{ border-color:var(--brand); box-shadow:0 0 0 3px rgba(31,111,235,.18); }
+
+  .btn{ background:var(--brand); color:#fff; border:none; border-radius:10px; padding:8px 12px; cursor:pointer; }
+  .btn:hover{ opacity:.95; }
+  .btn.outline{ background:transparent; color:var(--text); border:1px solid var(--border); }
+  .btn.ghost{ background:transparent; color:var(--text); border:1px solid var(--border); }
+  .btn.danger{ background:var(--danger); }
+
+  .item-list{ list-style:none; margin:0; padding:0; }
+  .item{ display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--border); }
+  .item:first-child{ border-top:none; }
+  .item-link{ color:var(--text); font-weight:600; text-decoration:none; }
+  .item-link:hover{ text-decoration:underline; }
+
+  .note-list{ list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .note{ border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,.02); }
+  .note-head{ display:flex; justify-content:space-between; gap:10px; }
+  .note-body{ margin-top:6px; white-space:pre-wrap; }
+
+  .empty{ padding:10px; border:1px dashed var(--border); border-radius:10px; color:var(--muted); }
+  .form-inline{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+  .danger { background:#b3261e; color:#fff; border:none; padding:8px 12px; border-radius:8px; }
+  .danger:hover { opacity:.92; }
+
+  .mb12{ margin-bottom:12px; }
+  .mt8{ margin-top:8px; }
+</style>
+{% endblock %}

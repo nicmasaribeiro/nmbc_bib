@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ page.title }} · <em>Code Pad:</em> {{ topic.title }}</h2>
+
+<div class="row" style="gap:8px; flex-wrap:wrap; align-items:center">
+  <a class="buttonlike" href="{{ url_for('topic_view', project_id=project.id, page_id=page.id, topic_id=topic.id) }}">← Back to Topic</a>
+  <form action="{{ url_for('codepad_cell_create', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" method="post" style="margin:0">
+    <button type="submit">+ Add Cell</button>
+  </form>
+  <a class="buttonlike" id="dl-link" href="{{ url_for('topic_code_download', project_id=project.id, page_id=page.id, topic_id=topic.id) }}">Download .py</a>
+</div>
+
+<div class="card console-card">
+  <div class="row" style="gap:8px; align-items:center; flex-wrap:wrap">
+    <label>Language:
+      <select id="lang">
+        <option value="python" selected>Python</option>
+        <option value="cpp">C++ (server)</option>
+      </select>
+    </label>
+    <label>Mode:
+      <select id="exec-mode">
+        <option value="browser">Browser (Pyodide)</option>
+        <option value="server">Server (venv){% if not ENABLE_SERVER_EXEC %} — disabled{% endif %}</option>
+      </select>
+    </label>
+    <label>Scope:
+      <select id="exec-scope">
+        <option value="current">Current cell</option>
+        <option value="all">All cells</option>
+      </select>
+    </label>
+    <button id="run-btn">Run</button>
+    <button id="stop-btn" disabled>Stop</button>
+    <button id="clear-btn" type="button">Clear</button>
+    <button id="copy-btn" type="button">Copy</button>
+    <span id="status" class="muted" style="margin-left:auto;"></span>
+  </div>
+  <pre id="console" class="output" aria-live="polite">— output will appear here —</pre>
+</div>
+
+<div id="cells">
+  {% for c in codecells %}
+  <div class="card code-cell" id="cell-{{ c.id }}" data-cell-id="{{ c.id }}">
+    <div class="row cell-toolbar">
+      <strong>Cell #{{ loop.index }}</strong>
+      <div class="row" style="gap:6px">
+        <button type="button" onclick="setCurrent({{ c.id }})">Use as current</button>
+        <button type="button" onclick="saveCell({{ c.id }})">Save</button>
+        <form action="{{ url_for('codecell_delete', project_id=project.id, page_id=page.id, topic_id=topic.id, cell_id=c.id) }}"
+              method="post" style="margin:0" onsubmit="return confirm('Delete this cell?')">
+          <button>Delete</button>
+        </form>
+      </div>
+    </div>
+    <textarea id="code-{{ c.id }}" class="codearea" spellcheck="false">{{ c.code }}</textarea>
+  </div>
+  {% endfor %}
+</div>
+
+<style>
+  .buttonlike { background:#1f6feb; color:#fff; border:none; padding:8px 14px; border-radius:10px; text-decoration:none; display:inline-block; }
+  .buttonlike:hover { opacity:.92; }
+  .muted { opacity:.8 }
+  .console-card { padding:12px; margin:12px 0; border:1px solid #22314a; background:#0b1220; border-radius:14px; }
+  .output { min-height:220px; background:#050a16; color:#e6edf3; border:1px solid #22314a; border-radius:10px; padding:12px; white-space:pre-wrap; overflow:auto; }
+  .code-cell { padding:10px; margin:12px 0; border:1px solid #22314a; background:#0b1220; border-radius:14px; }
+  .cell-toolbar { justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .CodeMirror { height:auto; min-height:160px; border:1px solid #22314a; border-radius:10px; background:#0b1020; color:#f5faff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+  .cm-s-darcula .CodeMirror-gutters { background:#0b1020; border-right:1px solid #22314a; }
+  .cm-s-darcula .CodeMirror-cursor { border-left: 2px solid #7db7ff; }
+  .cm-s-darcula .CodeMirror-selected { background:#173a63 !important; }
+</style>
+
+<!-- CodeMirror for language highlighting -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/darcula.css">
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.js"></script>
+
+<!-- Pyodide for browser Python -->
+<script>
+  let pyodideReady = (async ()=>{
+    const { loadPyodide } = await import("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.mjs");
+    const py = await loadPyodide();
+    try {
+      py.setStdout({ batched: s => window.appendOut(s) });
+      py.setStderr({ batched: s => window.appendOut(s) });
+    } catch(e) {
+      await py.runPythonAsync(`
+import sys
+class _W:
+    def write(self,s):
+        import js
+        js.window.appendOut(s)
+    def flush(self): pass
+sys.stdout = _W()
+sys.stderr = _W()
+      `);
+    }
+    await py.loadPackage(["numpy","micropip","pandas","matplotlib"]);
+    return py;
+  })();
+</script>
+
+<script>
+(function(){
+  // Elements
+  const consoleEl = document.getElementById('console');
+  const statusEl  = document.getElementById('status');
+  const runBtn    = document.getElementById('run-btn');
+  const stopBtn   = document.getElementById('stop-btn');
+  const clearBtn  = document.getElementById('clear-btn');
+  const copyBtn   = document.getElementById('copy-btn');
+  const execModeSel = document.getElementById('exec-mode');
+  const execScopeSel= document.getElementById('exec-scope');
+  const langSel     = document.getElementById('lang');
+  const dlLink      = document.getElementById('dl-link');
+
+  // Console helpers
+  function appendOut(t){ consoleEl.textContent += t; consoleEl.scrollTop = consoleEl.scrollHeight; }
+  window.appendOut = appendOut;
+  function setStatus(t){ statusEl.textContent = t || ''; }
+  function clearOut(){ consoleEl.textContent = ''; setStatus(''); }
+
+  // CodeMirror editors
+  const editors = new Map();
+  function cmMode(){ return (langSel.value === 'cpp') ? 'text/x-c++src' : 'python'; }
+  function initEditors(){
+    document.querySelectorAll('textarea.codearea').forEach(ta=>{
+      const id = parseInt(ta.id.replace('code-',''), 10);
+      const cm = CodeMirror.fromTextArea(ta, {
+        mode: cmMode(), theme: 'darcula', lineNumbers: true,
+        indentUnit: 4, smartIndent: true, matchBrackets: true, autoCloseBrackets: true,
+        viewportMargin: Infinity
+      });
+      editors.set(id, cm);
+    });
+  }
+  function updateEditorsMode(){ const m = cmMode(); editors.forEach(cm=>cm.setOption('mode', m)); }
+  function getCode(id){ const cm = editors.get(id); return cm ? cm.getValue() : ''; }
+  function allCode(){ const parts=[]; editors.forEach(cm=>parts.push(cm.getValue())); return parts.join('\n\n'); }
+
+  // Current cell selection
+  let currentCellId = null;
+  function setCurrent(id){
+    currentCellId = id; setStatus('Current cell: #'+id);
+    document.querySelectorAll('.code-cell').forEach(el=>el.classList.remove('active'));
+    const el = document.querySelector(`#cell-${id}`); if (el) el.classList.add('active');
+  }
+  window.setCurrent = setCurrent;
+
+  // Save cell
+  window.saveCell = (id)=>{
+    const code = getCode(id);
+    fetch("{{ url_for('codecell_save', project_id=project.id, page_id=page.id, topic_id=topic.id, cell_id=0) }}".replace('0', id), {
+      method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body:new URLSearchParams({code})
+    }).then(r=>r.json()).then(_=>{ setStatus('Saved cell #'+id); });
+  };
+
+  // Download link reflects language
+  function refreshDL(){
+    const base = "{{ url_for('topic_code_download', project_id=project.id, page_id=page.id, topic_id=topic.id) }}";
+    dlLink.textContent = (langSel.value === 'cpp') ? 'Download .cpp' : 'Download .py';
+    dlLink.href = base + (langSel.value === 'cpp' ? '?lang=cpp' : '');
+  }
+  langSel.addEventListener('change', ()=>{ updateEditorsMode(); refreshDL(); if (langSel.value==='cpp' && execModeSel.value==='browser'){ setStatus('C++ is not supported in-browser. Use Server mode or download.'); } });
+
+  // Run control
+  runBtn.onclick = async ()=>{
+    clearOut(); runBtn.disabled = true; stopBtn.disabled = false;
+    const mode = execModeSel.value, scope = execScopeSel.value, lang = langSel.value;
+    const code = (scope === 'current') ? (currentCellId ? getCode(currentCellId) : '') : allCode();
+    if (!code.trim()){ appendOut('No code to run.\n'); done(); return; }
+    if (lang==='cpp' && mode==='browser'){ appendOut('[browser] C++ not supported in-browser.\n'); done(); return; }
+    if (mode==='browser'){ await runBrowser(code); } else { await runServer(code, lang); }
+    done();
+  };
+  stopBtn.onclick = ()=>{ appendOut('[status] Stop requested (process ends on limits).\n'); setStatus('Stop requested'); };
+  clearBtn.onclick = clearOut;
+  copyBtn.onclick  = async ()=>{ try{ await navigator.clipboard.writeText(consoleEl.textContent); setStatus('Copied'); } catch(e){ setStatus('Copy failed'); } };
+  function done(){ runBtn.disabled = false; stopBtn.disabled = true; }
+
+  async function runBrowser(code){
+    try{
+      const py = await pyodideReady;
+      appendOut('[browser] Running in Pyodide…\n');
+      const res = await py.runPythonAsync(code);
+      if (typeof res !== 'undefined') appendOut(String(res)+'\n');
+      setStatus('Done');
+    }catch(e){ appendOut(String(e)+'\n'); setStatus('Error'); }
+  }
+
+  async function runServer(code, lang){
+    {% if not ENABLE_SERVER_EXEC %}
+      appendOut('[server] Disabled. Ask owner to enable server execution.\n'); setStatus('Disabled'); return;
+    {% endif %}
+    appendOut(`[server] Sending ${lang.toUpperCase()} code…\n`);
+    const r = await fetch("{{ url_for('exec_server_code', project_id=project.id, page_id=page.id, topic_id=topic.id) }}", {
+      method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ code, lang })
+    });
+    if (!r.ok){
+      let body; try { body = await r.json(); } catch { body = { error: await r.text() }; }
+      appendOut('Error: ' + (body.error || r.statusText) + '\n'); setStatus('Failed'); return;
+    }
+    appendOut('Started. Streaming output…\n'); setStatus('Running on server');
+  }
+
+  // Socket.IO
+  if (window.io){
+    const sock = io({ transports: ["websocket"], upgrade: false });
+    sock.emit("join_topic", {project_id: {{ project.id }}, page_id: {{ page.id }}, topic_id: {{ topic.id }}});
+    sock.on("code_output", msg=>{
+      if (msg.topic_id !== {{ topic.id }}) return;
+      const text = String(msg.data || '');
+      appendOut(`[${msg.stream}] ${text}${text.endsWith('\n')?'':'\n'}`);
+    });
+    sock.on("code_done", msg=>{
+      if (msg.topic_id !== {{ topic.id }}) return;
+      appendOut(`\n[status] process exited with code ${msg.returncode}\n`);
+      setStatus('Finished'); runBtn.disabled = false; stopBtn.disabled = true;
+    });
+  }
+
+  // Init
+  initEditors(); refreshDL();
+  const first = document.querySelector('.code-cell'); if (first){ setCurrent(parseInt(first.dataset.cellId,10)); }
+})();
+</script>
+{% endblock %}

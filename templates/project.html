@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="proj-wrap">
+  <header class="proj-header">
+    <div class="title-row">
+      <h2 class="project-title">{{ project.name }}</h2>
+      <div class="pill id-pill">#{{ project.id }}</div>
+    </div>
+
+    <div class="actions-row">
+      <form class="form-inline" action="{{ url_for('project_invite', project_id=project.id) }}" method="post" aria-label="Invite member by email">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+        <label class="visually-hidden" for="invite-email">Invite by email</label>
+        <input id="invite-email" name="email" type="email" placeholder="name@example.com" required>
+        <button type="submit" class="btn">Invite</button>
+      </form>
+
+      <form class="form-inline" action="{{ url_for('page_create', project_id=project.id) }}" method="post" aria-label="Create new page">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+        <label class="visually-hidden" for="new-page-title">New page title</label>
+        <input id="new-page-title" name="title" placeholder="New page title" required maxlength="180">
+        <button type="submit" class="btn">Create page</button>
+      </form>
+
+      <button type="button" class="btn ghost" id="copy-link-btn" data-link="{{ url_for('project_view', project_id=project.id, _external=True) }}">Copy project link</button>
+
+      <form class="form-inline" action="{{ url_for('project_delete', project_id=project.id) }}" method="post" onsubmit="return confirm('Delete this project and all its pages?')" aria-label="Delete project">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+        <button type="submit" class="btn danger">Delete Project</button>
+      </form>
+    </div>
+  </header>
+
+  <div class="grid two-col">
+    <!-- Left column -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Pages</h3>
+        <div class="muted small">{{ pages|length }} total</div>
+      </div>
+
+      {% if pages and pages|length > 0 %}
+      <div class="list">
+        <div class="list-controls">
+          <input id="page-filter" class="input" placeholder="Filter pages…" oninput="filterList('page-list', this.value)">
+        </div>
+        <ul class="item-list" id="page-list">
+          {% for pg in pages %}
+          <li class="item">
+            <div class="item-main">
+              <a class="item-link" href="{{ url_for('page_view', project_id=project.id, page_id=pg.id) }}">{{ pg.title }}</a>
+              <span class="pill">#{{ pg.id }}</span>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <div class="empty">
+        <p>No pages yet.</p>
+        <form action="{{ url_for('page_create', project_id=project.id) }}" method="post">
+          {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+          <input name="title" placeholder="Start with a title…" required>
+          <button class="btn">Create first page</button>
+        </form>
+      </div>
+      {% endif %}
+
+      <hr class="divider">
+
+      <div class="card-header">
+        <h3>Members</h3>
+        <div class="muted small">{{ members|length }} collaborator{{ members|length==1 and '' or 's' }}</div>
+      </div>
+
+      <ul class="item-list">
+        <li class="item owner">
+          <div class="item-main">
+            <span class="mono">{{ project.owner.email }}</span>
+            <span class="role-badge owner">owner</span>
+          </div>
+        </li>
+
+        {% for m in members %}
+        <li class="item">
+          <div class="item-main">
+            <span class="mono">{{ m.user.email }}</span>
+            <span class="role-badge {{ m.role }}">{{ m.role }}</span>
+          </div>
+
+          {% if current_user.is_authenticated and current_user.id == project.owner_id %}
+          <div class="item-actions">
+            <form action="{{ url_for('member_change_role', project_id=project.id, member_id=m.id) }}" method="post" class="form-inline compact" aria-label="Change role for {{ m.user.email }}">
+              {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+              <label class="visually-hidden" for="role-{{ m.id }}">Role</label>
+              <select id="role-{{ m.id }}" name="role" onchange="this.form.requestSubmit()">
+                <option value="editor" {{ 'selected' if m.role=='editor' else '' }}>editor</option>
+                <option value="viewer" {{ 'selected' if m.role=='viewer' else '' }}>viewer</option>
+              </select>
+            </form>
+            <form action="{{ url_for('member_remove', project_id=project.id, member_id=m.id) }}" method="post" class="form-inline compact" onsubmit="return confirm('Remove {{ m.user.email }}?')" aria-label="Remove {{ m.user.email }}">
+              {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+              <button class="btn outline">Remove</button>
+            </form>
+          </div>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <!-- Right column -->
+    <aside class="card">
+      <div class="card-header">
+        <h3>Citations</h3>
+      </div>
+      {% include "_citations_panel.html" %}
+    </aside>
+  </div>
+</section>
+
+<!-- Styles -->
+<style>
+  :root{
+    --bg: var(--bg, #0b0e11);
+    --card: var(--card, #121826);
+    --text: var(--text, #e6edf3);
+    --muted: var(--muted, #9aa7b2);
+    --border: var(--border, #1c2433);
+    --brand: var(--brand, #1f6feb);
+    --danger: #b3261e;
+    --ok: #1b873f;
+  }
+  .proj-wrap{ display:flex; flex-direction:column; gap:18px; }
+  .proj-header{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:12px; }
+  .title-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .project-title{ margin:0; font-size:1.6rem; line-height:1.2; }
+  .id-pill{ background:rgba(255,255,255,.06); border:1px solid var(--border); padding:4px 8px; border-radius:999px; font-size:.8rem; }
+  .actions-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .form-inline{ display:flex; gap:8px; align-items:center; }
+  .form-inline.compact{ gap:6px; }
+  .input, input[type="text"], input[type="email"], select{
+    background:var(--bg); color:var(--text); border:1px solid var(--border);
+    border-radius:10px; padding:8px 10px; outline:none; min-width:220px;
+  }
+  .input:focus, input:focus, select:focus{ border-color: var(--brand); box-shadow: 0 0 0 3px rgba(31,111,235,.2); }
+  .btn{
+    background:var(--brand); color:#fff; border:none; border-radius:10px; padding:8px 12px; cursor:pointer;
+  }
+  .btn:hover{ opacity:.95; }
+  .btn.danger{ background:var(--danger); }
+  .btn.ghost{ background:transparent; color:var(--text); border:1px solid var(--border); }
+  .btn.outline{ background:transparent; color:var(--text); border:1px solid var(--border); }
+  .grid.two-col{ display:grid; grid-template-columns: 1.2fr .8fr; gap:16px; }
+  @media (max-width: 900px){ .grid.two-col{ grid-template-columns: 1fr; } }
+  .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .card-header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border); }
+  .muted{ color:var(--muted); }
+  .small{ font-size:.9rem; }
+  .list{ display:flex; flex-direction:column; gap:8px; padding:12px 14px; }
+  .list-controls{ display:flex; gap:8px; align-items:center; }
+  .item-list{ list-style:none; margin:0; padding:0; }
+  .item{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 14px; border-top:1px solid var(--border); }
+  .item:first-child{ border-top:none; }
+  .item-main{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .item-link{ color:var(--text); text-decoration:none; font-weight:600; }
+  .item-link:hover{ text-decoration:underline; }
+  .item-actions{ display:flex; gap:8px; align-items:center; }
+  .pill{ font-size:.78rem; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .role-badge{ font-size:.78rem; padding:2px 8px; border-radius:999px; border:1px solid var(--border); text-transform:uppercase; letter-spacing:.02em; }
+  .role-badge.owner{ background:rgba(27,135,63,.12); border-color:rgba(27,135,63,.4); color:#8ee2a3; }
+  .role-badge.viewer{ background:rgba(255,255,255,.05); color:var(--muted); }
+  .role-badge.editor{ background:rgba(31,111,235,.12); border-color:rgba(31,111,235,.4); color:#9cc4ff; }
+  .owner .mono{ font-weight:600; }
+  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  .empty{ padding:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .divider{ border:none; border-top:1px solid var(--border); margin:10px 0; }
+  .visually-hidden{ position:absolute !important; height:1px; width:1px; overflow:hidden; clip:rect(1px,1px,1px,1px); white-space:nowrap; }
+</style>
+
+<!-- Scripts -->
+<script>
+  // Single socket connection for this page
+  (function(){
+    if (!window.io) return;
+    const socket = io();
+    const pid = {{ project.id }};
+    socket.emit("join_project", { project_id: pid });
+
+    // Normalize update events -> reload (simple but effective)
+    const rel = () => location.reload();
+    ["member_added","member_updated","member_removed","citation_added"].forEach(ev =>
+      socket.on(ev, (msg) => { if (msg && msg.project_id == pid) rel(); })
+    );
+  })();
+
+  // Filter list utility
+  function filterList(listId, q){
+    const ul = document.getElementById(listId);
+    if (!ul) return;
+    const norm = (s) => (s||"").toLowerCase().trim();
+    const term = norm(q);
+    for (const li of ul.children){
+      const txt = norm(li.textContent);
+      li.style.display = txt.includes(term) ? "" : "none";
+    }
+  }
+
+  // Copy project link
+  (function(){
+    const btn = document.getElementById('copy-link-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const link = btn.getAttribute('data-link');
+      try {
+        await navigator.clipboard.writeText(link);
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy project link', 1200);
+      } catch {
+        prompt('Copy this project link:', link);
+      }
+    });
+  })();
+</script>
+{% endblock %}

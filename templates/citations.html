@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Citations</h2>
+
+<form class="row" method="get" style="gap:8px; flex-wrap:wrap">
+  <input name="q" value="{{ q }}" placeholder="Search title / abstract / doi / url" style="min-width:280px">
+  <button>Search</button>
+  <a class="buttonlike" href="{{ url_for('citations_export', project_id=project_id, fmt='bibtex') }}">Export .bib</a>
+  <a class="buttonlike" href="{{ url_for('citations_export', project_id=project_id, fmt='ris') }}">Export .ris</a>
+  <a class="buttonlike" href="{{ url_for('citations_export', project_id=project_id, fmt='csljson') }}">Export .json</a>
+</form>
+
+<form method="post" action="{{ url_for('citations_import', project_id=project_id) }}" enctype="multipart/form-data" style="margin:10px 0">
+  <input type="file" name="file" required>
+  <button>Import (CSL-JSON or BibTeX)</button>
+</form>
+
+<hr>
+
+<h3>Add</h3>
+<form method="post" action="{{ url_for('citations_create', project_id=project_id) }}" class="card" style="padding:12px">
+  <div class="grid2" style="gap:10px">
+    <label>Title <input name="title" required></label>
+    <label>Cite key <input name="cite_key" placeholder="auto if blank"></label>
+    <label>Authors <input name="authors" placeholder="Family, Given; Family2, Given2"></label>
+    <label>Year <input name="year" type="number" min="0"></label>
+    <label>Venue <input name="container_title" placeholder="Journal / Conference"></label>
+    <label>Publisher <input name="publisher"></label>
+    <label>Volume <input name="volume"></label>
+    <label>Issue <input name="issue"></label>
+    <label>Pages <input name="pages"></label>
+    <label>Type
+      <select name="type">
+        <option value="article-journal">Journal Article</option>
+        <option value="paper-conference">Conference Paper</option>
+        <option value="book">Book</option>
+        <option value="chapter">Book Chapter</option>
+        <option value="thesis">Thesis</option>
+      </select>
+    </label>
+    <label>DOI <input name="doi"></label>
+    <label>URL <input name="url"></label>
+  </div>
+  <label>Abstract <textarea name="abstract" rows="3"></textarea></label>
+  <div class="row" style="gap:8px; flex-wrap:wrap; margin-top:8px">
+    <button>Add</button>
+  </div>
+</form>
+
+<hr>
+
+<h3>All</h3>
+<ul class="list">
+  {% for c in items %}
+  <li class="card" style="padding:10px; margin-bottom:10px">
+    <div><strong>{{ c.cite_key }}</strong> — {{ c|cite_human }}</div>
+    <div class="row" style="gap:8px; margin-top:6px">
+      <form method="post" action="{{ url_for('citations_delete', project_id=project_id, cid=c.id) }}"
+            onsubmit="return confirm('Delete citation {{ c.cite_key }}?')">
+        <button class="danger">Delete</button>
+      </form>
+      <!-- Quick inline edit -->
+      <details>
+        <summary>Edit</summary>
+        <form method="post" action="{{ url_for('citations_edit', project_id=project_id, cid=c.id) }}" class="grid2" style="gap:8px; margin-top:6px">
+          <label>Title <input name="title" value="{{ c.title|e }}"></label>
+          <label>Cite key <input name="cite_key" value="{{ c.cite_key|e }}"></label>
+          <label>Authors <input name="authors" value="{% for a in c.authors_json %}{{ a.family }}, {{ a.given }}{% if not loop.last %}; {% endif %}{% endfor %}"></label>
+          <label>Year <input name="year" value="{{ c.year or '' }}"></label>
+          <label>Venue <input name="container_title" value="{{ c.container_title or '' }}"></label>
+          <label>DOI <input name="doi" value="{{ c.doi or '' }}"></label>
+          <label>URL <input name="url" value="{{ c.url or '' }}"></label>
+          <label>Abstract <textarea name="abstract" rows="3">{{ c.abstract or '' }}</textarea></label>
+          <button>Save</button>
+        </form>
+      </details>
+    </div>
+  </li>
+  {% else %}
+  <li>No citations yet.</li>
+  {% endfor %}
+</ul>
+
+<style>
+  .buttonlike { background:#1f6feb; color:#fff; border:none; padding:8px 12px; border-radius:10px; text-decoration:none; }
+  .danger { background:#b3261e; color:#fff; border:none; padding:6px 10px; border-radius:8px; }
+  .grid2 { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .list { list-style:none; padding:0; }
+  .card { border:1px solid #22314a; border-radius:12px; background:#0b1220; color:#e6edf3; }
+  input, textarea, select { width:100%; }
+</style>
+{% endblock %}
