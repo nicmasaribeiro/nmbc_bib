@@ -35,3 +35,18 @@ button:hover { opacity:.9; }
 .modal .tabs button.active { background:#1f6feb; color:white; border-color:#1f6feb; }
 .modal footer { display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid #1c2433; }
 button.linklike { background:transparent; border:none; color:#7db7ff; cursor:pointer; padding:0; }
+.logo {
+	height: 35px;
+	vertical-align: middle;
+/*	margin-right: 10px;*/
+}
+.logo-link {
+	display: inline-flex;
+	align-items: center;
+}
+header {
+	position:sticky; top:0; z-index:50;
+	display:flex; align-items:center; justify-content:space-between;
+	padding:10px 16px; border-bottom:1px solid var(--border); background:var(--bg);
+	gap:12px;
+}
