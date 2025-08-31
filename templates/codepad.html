@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>{{ page.title }} · <em>Code Pad:</em> {{ topic.title }}</h2>
+<!-- at the top of the template body -->
+<div id="exec-flag" data-enabled="{{ 1 if ENABLE_SERVER_EXEC else 0 }}"></div>
+
+<script>
+  (function(){
+    const flag = document.getElementById('exec-flag');
+    const enabled = flag && flag.dataset.enabled === "1";
+    const execModeSel = document.getElementById('exec-mode');
+    const serverOpt = [...execModeSel.options].find(o => o.value === 'server');
+    if (enabled && serverOpt){ serverOpt.disabled = false; } // JS safety switch
+  })();
+</script>
 
 <div class="row" style="gap:8px; flex-wrap:wrap; align-items:center">
   <a class="buttonlike" href="{{ url_for('topic_view', project_id=project.id, page_id=page.id, topic_id=topic.id) }}">← Back to Topic</a>
@@ -8,6 +20,11 @@
     <button type="submit">+ Add Cell</button>
   </form>
   <a class="buttonlike" id="dl-link" href="{{ url_for('topic_code_download', project_id=project.id, page_id=page.id, topic_id=topic.id) }}">Download .py</a>
+</div>
+
+{% set server_enabled = ENABLE_SERVER_EXEC %}
+<div id="exec-disabled-banner" class="banner{% if server_enabled %} hidden{% endif %}">
+  Server execution is disabled. Ask an admin to set <code>EXEC_SERVER_ENABLED=true</code>.
 </div>
 
 <div class="card console-card">
@@ -20,8 +37,8 @@
     </label>
     <label>Mode:
       <select id="exec-mode">
-        <option value="browser">Browser (Pyodide)</option>
-        <option value="server">Server (venv){% if not ENABLE_SERVER_EXEC %} — disabled{% endif %}</option>
+        <option value="browser" {% if not server_enabled %}selected{% endif %}>Browser (Pyodide)</option>
+        <option value="server" {% if server_enabled %}selected{% endif %} {% if not server_enabled %}disabled{% endif %}>Server (venv){% if not server_enabled %} — disabled{% endif %}</option>
       </select>
     </label>
     <label>Scope:
@@ -65,19 +82,35 @@
   .console-card { padding:12px; margin:12px 0; border:1px solid #22314a; background:#0b1220; border-radius:14px; }
   .output { min-height:220px; background:#050a16; color:#e6edf3; border:1px solid #22314a; border-radius:10px; padding:12px; white-space:pre-wrap; overflow:auto; }
   .code-cell { padding:10px; margin:12px 0; border:1px solid #22314a; background:#0b1220; border-radius:14px; }
-  .cell-toolbar { justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .cell-toolbar { justify-content:space-between; align-items:center; margin-bottom:8px; display:flex; }
+  .banner{ padding:10px; border-radius:8px; background:#0b1220; border:1px solid #22314a; margin:10px 0; }
+  .hidden{ display:none; }
   .CodeMirror { height:auto; min-height:160px; border:1px solid #22314a; border-radius:10px; background:#0b1020; color:#f5faff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
   .cm-s-darcula .CodeMirror-gutters { background:#0b1020; border-right:1px solid #22314a; }
   .cm-s-darcula .CodeMirror-cursor { border-left: 2px solid #7db7ff; }
   .cm-s-darcula .CodeMirror-selected { background:#173a63 !important; }
+  .code-cell.active { outline:2px solid #1f6feb; border-radius:16px; }
 </style>
 
-<!-- CodeMirror for language highlighting -->
+<!-- CodeMirror core + theme -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/darcula.css">
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.js"></script>
+<!-- IMPORTANT: addons for options we use -->
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/closebrackets.js"></script>
+
+<!-- Socket.IO (load if not already provided by base.html) -->
+<script>
+if(!window.io){
+  var s=document.createElement('script');
+  s.src="https://cdn.socket.io/4.7.5/socket.io.min.js";
+  s.crossOrigin="anonymous";
+  document.head.appendChild(s);
+}
+</script>
 
 <!-- Pyodide for browser Python -->
 <script>
@@ -99,7 +132,7 @@ sys.stdout = _W()
 sys.stderr = _W()
       `);
     }
-    await py.loadPackage(["numpy","micropip","pandas","matplotlib"]);
+    // keep packages light; add more on demand
     return py;
   })();
 </script>
@@ -117,6 +150,9 @@ sys.stderr = _W()
   const execScopeSel= document.getElementById('exec-scope');
   const langSel     = document.getElementById('lang');
   const dlLink      = document.getElementById('dl-link');
+  const banner      = document.getElementById('exec-disabled-banner');
+  const SERVER_ENABLED = {{ 'true' if server_enabled else 'false' }};
+  const CSRF = {{ 'csrf_token()' in globals() and csrf_token() and ('"%s"' % csrf_token()) or '""' }};
 
   // Console helpers
   function appendOut(t){ consoleEl.textContent += t; consoleEl.scrollTop = consoleEl.scrollHeight; }
@@ -155,7 +191,8 @@ sys.stderr = _W()
   window.saveCell = (id)=>{
     const code = getCode(id);
     fetch("{{ url_for('codecell_save', project_id=project.id, page_id=page.id, topic_id=topic.id, cell_id=0) }}".replace('0', id), {
-      method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded", ...(CSRF ? {'X-CSRFToken': CSRF} : {})},
       body:new URLSearchParams({code})
     }).then(r=>r.json()).then(_=>{ setStatus('Saved cell #'+id); });
   };
@@ -166,19 +203,63 @@ sys.stderr = _W()
     dlLink.textContent = (langSel.value === 'cpp') ? 'Download .cpp' : 'Download .py';
     dlLink.href = base + (langSel.value === 'cpp' ? '?lang=cpp' : '');
   }
-  langSel.addEventListener('change', ()=>{ updateEditorsMode(); refreshDL(); if (langSel.value==='cpp' && execModeSel.value==='browser'){ setStatus('C++ is not supported in-browser. Use Server mode or download.'); } });
 
-  // Run control
+  langSel.addEventListener('change', ()=>{
+    updateEditorsMode(); refreshDL();
+    if (langSel.value==='cpp' && execModeSel.value==='browser'){
+      setStatus('C++ is not supported in-browser. Switch to Server mode.');
+    } else { setStatus(''); }
+  });
+
+  execModeSel.addEventListener('change', ()=>{
+    if (execModeSel.value === 'server' && !SERVER_ENABLED){
+      execModeSel.value = 'browser';
+      setStatus('Server execution is disabled.');
+      banner && banner.classList.remove('hidden');
+    }
+    if (execModeSel.value === 'browser' && langSel.value === 'cpp'){
+      setStatus('C++ requires Server mode.');
+    }
+  });
+
+  // Run/Stop control
+  let sock = null;  // socket will be created lazily
+  function ensureSocket(){
+    if (sock || !window.io) return;
+    sock = io({ transports: ["websocket"], upgrade: false });
+    sock.emit("join_topic", {project_id: {{ project.id }}, page_id: {{ page.id }}, topic_id: {{ topic.id }}});
+    sock.on("code_output", msg=>{
+      if (msg.topic_id !== {{ topic.id }}) return;
+      const text = String(msg.data || '');
+      appendOut(`[${msg.stream}] ${text}${text.endsWith('\n')?'':'\n'}`);
+    });
+    sock.on("code_done", msg=>{
+      if (msg.topic_id !== {{ topic.id }}) return;
+      appendOut(`\n[status] process exited with code ${msg.returncode}\n`);
+      setStatus('Finished');
+      runBtn.disabled = false; stopBtn.disabled = true;
+    });
+  }
+
   runBtn.onclick = async ()=>{
     clearOut(); runBtn.disabled = true; stopBtn.disabled = false;
     const mode = execModeSel.value, scope = execScopeSel.value, lang = langSel.value;
     const code = (scope === 'current') ? (currentCellId ? getCode(currentCellId) : '') : allCode();
     if (!code.trim()){ appendOut('No code to run.\n'); done(); return; }
     if (lang==='cpp' && mode==='browser'){ appendOut('[browser] C++ not supported in-browser.\n'); done(); return; }
-    if (mode==='browser'){ await runBrowser(code); } else { await runServer(code, lang); }
-    done();
+
+    try{
+      if (mode==='browser'){ await runBrowser(code); }
+      else { await runServer(code, lang); ensureSocket(); }
+    } finally { /* keep disabled; re-enabled by code_done or error */ }
   };
-  stopBtn.onclick = ()=>{ appendOut('[status] Stop requested (process ends on limits).\n'); setStatus('Stop requested'); };
+
+  stopBtn.onclick = ()=>{
+    appendOut('[status] Stop requested (will terminate via server).\n');
+    setStatus('Stop requested');
+    if (sock){ sock.emit("code_stop", { project_id: {{ project.id }}, page_id: {{ page.id }}, topic_id: {{ topic.id }} }); }
+  };
+
   clearBtn.onclick = clearOut;
   copyBtn.onclick  = async ()=>{ try{ await navigator.clipboard.writeText(consoleEl.textContent); setStatus('Copied'); } catch(e){ setStatus('Copy failed'); } };
   function done(){ runBtn.disabled = false; stopBtn.disabled = true; }
@@ -190,38 +271,29 @@ sys.stderr = _W()
       const res = await py.runPythonAsync(code);
       if (typeof res !== 'undefined') appendOut(String(res)+'\n');
       setStatus('Done');
-    }catch(e){ appendOut(String(e)+'\n'); setStatus('Error'); }
+      done();
+    }catch(e){ appendOut(String(e)+'\n'); setStatus('Error'); done(); }
   }
 
-  async function runServer(code, lang){
-    {% if not ENABLE_SERVER_EXEC %}
-      appendOut('[server] Disabled. Ask owner to enable server execution.\n'); setStatus('Disabled'); return;
-    {% endif %}
-    appendOut(`[server] Sending ${lang.toUpperCase()} code…\n`);
-    const r = await fetch("{{ url_for('exec_server_code', project_id=project.id, page_id=page.id, topic_id=topic.id) }}", {
-      method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ code, lang })
-    });
-    if (!r.ok){
-      let body; try { body = await r.json(); } catch { body = { error: await r.text() }; }
-      appendOut('Error: ' + (body.error || r.statusText) + '\n'); setStatus('Failed'); return;
+    async function runServer(code, lang){
+      {% if not ENABLE_SERVER_EXEC %}
+      appendOut('[server] Disabled. Ask owner to enable server execution.\n');
+      setStatus('Disabled'); return;
+      {% endif %}
+      // otherwise proceed to POST to your exec route...
     }
-    appendOut('Started. Streaming output…\n'); setStatus('Running on server');
-  }
 
-  // Socket.IO
-  if (window.io){
-    const sock = io({ transports: ["websocket"], upgrade: false });
-    sock.emit("join_topic", {project_id: {{ project.id }}, page_id: {{ page.id }}, topic_id: {{ topic.id }}});
-    sock.on("code_output", msg=>{
-      if (msg.topic_id !== {{ topic.id }}) return;
-      const text = String(msg.data || '');
-      appendOut(`[${msg.stream}] ${text}${text.endsWith('\n')?'':'\n'}`);
-    });
-    sock.on("code_done", msg=>{
-      if (msg.topic_id !== {{ topic.id }}) return;
-      appendOut(`\n[status] process exited with code ${msg.returncode}\n`);
-      setStatus('Finished'); runBtn.disabled = false; stopBtn.disabled = true;
-    });
+    let body, text;
+    if (!r.ok){
+      try { body = await r.json(); } catch { text = await r.text(); }
+      appendOut('Error: ' + ((body && (body.error||body.detail)) || text || r.statusText) + '\n');
+      setStatus('Failed'); done(); return;
+    }
+    // Optional: read job id to attach if your backend returns it
+    try { body = await r.json(); } catch {}
+    appendOut('Started. Streaming output…\n');
+    setStatus('Running on server');
+    // runBtn will be re-enabled when we get code_done over the socket.
   }
 
   // Init

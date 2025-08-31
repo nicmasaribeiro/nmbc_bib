@@ -2,16 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>{{ title or "Bibliography Tool" }}</title>
+  <title>NMBC Bib.io</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
     integrity="sha384-mNY9gLMTJIp6n8+zK7i6ghXfI6oUvvK3dT7BlX6pXWy6+1Yl4e+I3Ao3PKW8m3D5"
     crossorigin="anonymous"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
-
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
 </head>
 <body>
+  <header>
+    <a class="brand" href="/">NMBC <span>Bib.io</span></a>
+  </header>
   <nav class="topbar">
     <div class="left">
       <a href="{{ url_for('dashboard') }}">🏷️ Projects</a>

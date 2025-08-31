@@ -23,8 +23,14 @@
     <section class="card">
       <div class="card-header">
         <h3>Markdown / LaTeX</h3>
-        <div class="row gap8">
+        <div class="row gap8 wrap">
           <button id="saveMdBtn" class="btn outline">Save now</button>
+          <button id="exportHtmlBtn" class="btn outline" title="Export the rendered preview as a standalone HTML file">
+            Export → HTML
+          </button>
+          <button id="exportPdfBtn" class="btn outline" title="Send HTML to server-side PDF generator">
+            Export → PDF
+          </button>
           <span class="muted small">Revision <span id="rev">{{ topic.revision }}</span></span>
           <span id="save-status" class="muted small" aria-live="polite"></span>
         </div>
@@ -74,6 +80,25 @@
         <div class="empty">No attachments yet.</div>
         {% endif %}
       </div>
+
+      <!-- Hidden export forms (programmatically submitted) -->
+      <form id="exportHtmlForm" method="post"
+            action="{{ url_for('topic_export_html', project_id=project.id, page_id=page.id, topic_id=topic.id) }}"
+            class="hidden">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+        <input type="hidden" name="title" value="{{ page.title }} — {{ topic.title }}">
+        <input type="hidden" name="content_md" value="">
+        <input type="hidden" name="content_html" value="">
+      </form>
+
+      <form id="exportPdfForm" method="post"
+            action="{{ url_for('topic_export_pdf', project_id=project.id, page_id=page.id, topic_id=topic.id) }}"
+            class="hidden">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+        <input type="hidden" name="title" value="{{ page.title }} — {{ topic.title }}">
+        <input type="hidden" name="content_md" value="">
+        <input type="hidden" name="content_html" value="">
+      </form>
     </section>
 
     <!-- Right: Code cells + annotations -->
@@ -185,6 +210,11 @@
   const saveBtn = document.getElementById('saveMdBtn');
   const saveStatus = document.getElementById('save-status');
 
+  const exportHtmlBtn = document.getElementById('exportHtmlBtn');
+  const exportPdfBtn  = document.getElementById('exportPdfBtn');
+  const exportHtmlForm = document.getElementById('exportHtmlForm');
+  const exportPdfForm  = document.getElementById('exportPdfForm');
+
   let revision = parseInt(revEl?.textContent || "0", 10) || 0;
   let saveTimer = null, saving = false, dirty = false;
 
@@ -239,9 +269,68 @@
       .finally(()=> saving=false);
   }
 
+  // --- Export helpers ---
+  // Extracts the *current* HTML from preview (already sanitized & MathJax processed)
+  function collectExportPayload() {
+    // Clone to avoid mutating the live preview
+    const clone = preview.cloneNode(true);
+
+    // Optionally strip MathJax assistive elements, keep SVG output
+    // (MathJax v3 renders to <svg>; assistive <mjx-container> is fine for PDF/HTML)
+    // If you output CommonHTML/HTML-CSS, you may want to inline CSS here.
+
+    // Build a minimal standalone HTML document
+    const docTitle = "{{ page.title }} — {{ topic.title }}";
+    const bodyInner = clone.innerHTML;
+
+    const standalone = `
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>${docTitle}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  body{font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+       line-height:1.6; padding:28px; max-width:920px; margin:0 auto;}
+  h1,h2,h3{line-height:1.25}
+  pre,code{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+  .math{overflow-x:auto}
+  img{max-width:100%}
+</style>
+</head>
+<body>
+<main>
+${bodyInner}
+</main>
+</body>
+</html>`.trim();
+
+    return { title: docTitle, md: mdEl.value || "", html: standalone };
+  }
+
+  function submitForm(formEl, payload){
+    formEl.querySelector('input[name="content_md"]').value = payload.md;
+    formEl.querySelector('input[name="content_html"]').value = payload.html;
+    formEl.submit();
+  }
+
   // Live edit
   mdEl.addEventListener('input', ()=>{ renderPreview(); queueSave(); });
   saveBtn.addEventListener('click', (e)=>{ e.preventDefault(); doSave(); });
+
+  // Export handlers
+  exportHtmlBtn.addEventListener('click', (e)=>{
+    e.preventDefault();
+    const payload = collectExportPayload();
+    submitForm(exportHtmlForm, payload);
+  });
+
+  exportPdfBtn.addEventListener('click', (e)=>{
+    e.preventDefault();
+    const payload = collectExportPayload();
+    submitForm(exportPdfForm, payload);
+  });
 
   // Keyboard shortcut: Ctrl/Cmd+S to save
   document.addEventListener('keydown', (e) => {
@@ -285,9 +374,7 @@
   .card-header{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border); }
   .card-section{ padding:12px 14px; }
   .card.soft{ border-radius:12px; border:1px solid var(--border); background:rgba(255,255,255,.02); padding:12px; }
-  .card-lite{
-    background:var(--bg); border:1px dashed var(--border); border-radius:10px; padding:12px; min-height:40vh; overflow:auto;
-  }
+  .card-lite{ background:var(--bg); border:1px dashed var(--border); border-radius:10px; padding:12px; min-height:40vh; overflow:auto; }
 
   .row{ display:flex; gap:10px; align-items:center; }
   .row.gap8{ gap:8px; }
@@ -331,5 +418,7 @@
 
   .mb12{ margin-bottom:12px; }
   .mt8{ margin-top:8px; }
+
+  .hidden{ display:none; }
 </style>
 {% endblock %}
