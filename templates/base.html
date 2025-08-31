@@ -2,68 +2,205 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>NMBC Bib.io</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
-    integrity="sha384-mNY9gLMTJIp6n8+zK7i6ghXfI6oUvvK3dT7BlX6pXWy6+1Yl4e+I3Ao3PKW8m3D5"
-    crossorigin="anonymous"></script>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+  <title>{{ title or "NMBC Bib.io" }}</title>
+
+  <!-- Mobile-friendly viewport & safe zoom -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <meta name="theme-color" content="#0f1115"/>
+
+  <!-- Icons -->
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='logo.png') }}"/>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+  <!-- Minimal, mobile-first critical tweaks -->
+  <style>
+    :root{
+      --bg:#0f1115; --card:#151922; --text:#e7e9ee; --muted:#98a2b3; --border:#273045; --brand:#7c5cff;
+      --ring: rgba(124,92,255,.35);
+    }
+    @media (prefers-color-scheme: light){
+      :root{ --bg:#ffffff; --card:#f7f8fa; --text:#111827; --muted:#6b7280; --border:#e5e7eb; --brand:#5b4bff; --ring: rgba(91,75,255,.25); }
+    }
+    html,body{ height:100%; }
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji";
+      background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased; line-height:1.45;
+    }
+    /* Layout */
+    .wrap{ display:flex; flex-direction:column; min-height:100dvh; }
+    header{
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: saturate(180%) blur(8px);
+      background: color-mix(in oklab, var(--bg) 80%, transparent);
+      border-bottom:1px solid var(--border);
+    }
+    .bar{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; }
+    .brand{
+      display:inline-flex; align-items:center; gap:8px; text-decoration:none; color:var(--text); font-weight:700; letter-spacing:.2px;
+    }
+    .brand img{ width:28px; height:28px; border-radius:6px; }
+    .brand span{ color:var(--brand); }
+
+    /* Nav */
+    nav.topbar{ border-bottom:1px solid var(--border); }
+    .nav-inner{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 14px; }
+    .left, .right{ display:flex; align-items:center; gap:10px; }
+    .toplink{
+      display:inline-flex; align-items:center; gap:6px; padding:8px 12px; border-radius:10px; text-decoration:none;
+      color:var(--text); background:transparent; border:1px solid transparent;
+    }
+    .toplink:focus-visible{ outline:2px solid var(--ring); outline-offset:2px; border-radius:12px; }
+    .userpill{ color:var(--muted); font-size:.92rem; }
+
+    /* Mobile menu */
+    .menu-btn{
+      display:inline-flex; align-items:center; justify-content:center;
+      width:38px; height:38px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text);
+    }
+    .menu-panel{
+      display:none; border-top:1px solid var(--border); background:var(--card);
+    }
+    .menu-panel.open{ display:block; }
+    .menu-links{ display:flex; flex-direction:column; padding:8px; }
+    .menu-links a{ padding:10px 12px; border-radius:10px; text-decoration:none; color:var(--text); }
+    .menu-links a:active{ background: color-mix(in oklab, var(--card) 80%, var(--brand)); }
+
+    /* Container */
+    .container{ width:min(100%, 1080px); margin-inline:auto; padding:14px; }
+    @media (min-width: 720px){
+      .menu-btn{ display:none; }
+      .menu-panel{ display:none !important; }
+      .left, .right{ gap:12px; }
+    }
+
+    /* Flash messages */
+    .flashwrap{ display:grid; gap:8px; margin:8px 0 4px; }
+    .flash{ padding:10px 12px; border-radius:10px; background:var(--card); border:1px solid var(--border); }
+    .flash.success{ border-color:#22c55e33; }
+    .flash.error{ border-color:#ef444433; }
+
+    /* Fluid type for small screens */
+    h1,h2,h3{ line-height:1.2 }
+    h1{ font-size: clamp(1.25rem, 2.8vw + .6rem, 1.9rem); }
+    h2{ font-size: clamp(1.1rem, 2.2vw + .5rem, 1.5rem); }
+  </style>
+
+  {% block head %}{% endblock %}
 </head>
 <body>
-  <header>
-    <a class="brand" href="/">NMBC <span>Bib.io</span></a>
-  </header>
-  <nav class="topbar">
-    <div class="left">
-      <a href="{{ url_for('dashboard') }}">🏷️ Projects</a>
-    </div>
-    <div class="right">
-      {% if current_user.is_authenticated %}
-        <span>{{ current_user.email }}</span>
-        <a href="{{ url_for('logout') }}">Logout</a>
-      {% else %}
-        <a href="{{ url_for('login') }}">Login</a>
-      {% endif %}
-    </div>
-  </nav>
-  <main class="container">
-    {% with msgs = get_flashed_messages(with_categories=true) %}
-      {% if msgs %}
-        <div class="flashwrap">
-          {% for cat, m in msgs %}
-            <div class="flash {{ cat }}">{{ m }}</div>
-          {% endfor %}
+  <div class="wrap">
+    <!-- Top brand bar -->
+    <header>
+      <div class="bar">
+        <a class="brand" href="{{ url_for('dashboard') }}">
+          <img src="{{ url_for('static', filename='logo.png') }}" alt="NMBC logo" width="28" height="28" decoding="async">
+          NMBC <span>Bib.io</span>
+        </a>
+        <!-- Hamburger only on small screens -->
+        <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="menuPanel">
+          ☰
+        </button>
+      </div>
+
+      <!-- Primary nav -->
+      <nav class="topbar" role="navigation" aria-label="Primary">
+        <div class="nav-inner">
+          <div class="left">
+            <a class="toplink" href="{{ url_for('dashboard') }}">🏷️ Projects</a>
+          </div>
+          <div class="right">
+            {% if current_user.is_authenticated %}
+              <span class="userpill">{{ current_user.email }}</span>
+              <a class="toplink" href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+              <a class="toplink" href="{{ url_for('login') }}">Login</a>
+            {% endif %}
+          </div>
         </div>
-      {% endif %}
-    {% endwith %}
-    {% block content %}<!-- in base.html, load client from CDN -->
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
-    
-    <script>
-      // on pages that use sockets (e.g., code_workspace.html)
-      const sock = io({ transports: ["websocket"], upgrade: false }); // 👈 force WS
-      sock.emit("join_topic", { project_id: {{ project.id }}, page_id: {{ page.id }}, topic_id: {{ topic.id }} });
-      sock.on("code_output", (msg) => {
-        if (msg.topic_id !== {{ topic.id }}) return;
-        const text = String(msg.data || "");
-        appendOut(`[${msg.stream}] ${text}${text.endsWith('\n') ? '' : '\n'}`);
-      });
-      sock.on("code_done", (msg) => {
-        if (msg.topic_id !== {{ topic.id }}) return;
-        appendOut(`\n[status] process exited with code ${msg.returncode}\n`);
-      });
-    </script>
-{% endblock %}
-  </main>
-  <script src="{{ url_for('static', filename='page.js') }}"></script>
-  <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+
+        <!-- Collapsible mobile menu -->
+        <div class="menu-panel" id="menuPanel">
+          <div class="menu-links">
+            <a href="{{ url_for('dashboard') }}">🏷️ Projects</a>
+            {% if current_user.is_authenticated %}
+              <a href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+              <a href="{{ url_for('login') }}">Login</a>
+            {% endif %}
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Main content -->
+    <main class="container">
+      {% with msgs = get_flashed_messages(with_categories=true) %}
+        {% if msgs %}
+          <div class="flashwrap">
+            {% for cat, m in msgs %}
+              <div class="flash {{ cat }}">{{ m }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+    {% block footer %}{% endblock %}
+  </div>
+
+  <!-- Scripts: load once, defer for faster first paint -->
+  <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+  <script defer src="{{ url_for('static', filename='page.js') }}"></script>
+
   <script>
-    // Flask-SocketIO serves this path automatically; fallback local if you prefer
-    if (typeof io === 'undefined') {
-      document.write('<script src="/socket.io/socket.io.js"><\/script>');
-    }
+    // Mobile nav toggle
+    (function(){
+      const btn = document.getElementById('menuBtn');
+      const panel = document.getElementById('menuPanel');
+      if(!btn || !panel) return;
+      btn.addEventListener('click', () => {
+        const open = panel.classList.toggle('open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    }());
+
+    // Socket.IO: only join when the page provides project/page/topic
+    document.addEventListener('DOMContentLoaded', () => {
+      // Ensure Socket.IO is available and required IDs exist
+      try {
+        {% if project and page and topic %}
+          if (typeof io !== 'undefined') {
+            const sock = io({ transports: ["websocket"], upgrade: false });
+            sock.emit("join_topic", {
+              project_id: {{ project.id }},
+              page_id: {{ page.id }},
+              topic_id: {{ topic.id }}
+            });
+            // Optional listeners; guard appendOut existence
+            sock.on("code_output", (msg) => {
+              if (msg.topic_id !== {{ topic.id }}) return;
+              const text = String(msg.data || "");
+              if (typeof appendOut === 'function') {
+                appendOut(`[${msg.stream}] ${text}${text.endsWith('\n') ? '' : '\n'}`);
+              }
+            });
+            sock.on("code_done", (msg) => {
+              if (msg.topic_id !== {{ topic.id }}) return;
+              if (typeof appendOut === 'function') {
+                appendOut(`\n[status] process exited with code ${msg.returncode}\n`);
+              }
+            });
+          }
+        {% endif %}
+      } catch(e){ /* no-op on pages without sockets */ }
+    });
   </script>
+
+  {% block scripts %}{% endblock %}
 </body>
 </html>
