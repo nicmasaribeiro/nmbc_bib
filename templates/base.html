@@ -2,68 +2,165 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>NMBC Bib.io</title>
+  <title>{% block title %}NMBC Bib.io{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
-    integrity="sha384-mNY9gLMTJIp6n8+zK7i6ghXfI6oUvvK3dT7BlX6pXWy6+1Yl4e+I3Ao3PKW8m3D5"
-    crossorigin="anonymous"></script>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="theme-color" content="#0b1220"/>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+  {# One Socket.IO client from CDN; fallback to /socket.io/socket.io.js only if CDN fails #}
+  <script>
+    window.__SOCKET_IO_CDN__ = "https://cdn.socket.io/4.7.5/socket.io.min.js";
+  </script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous" onerror="
+    (function(){
+      var s=document.createElement('script');
+      s.src='/socket.io/socket.io.js'; s.async=true; document.head.appendChild(s);
+    })();
+  "></script>
+
+  {# Page-specific head additions (styles, meta, etc.) #}
+  {% block head_extra %}{% endblock %}
+  <style>
+    :root{
+      --bg:#0b1220; --panel:#0f1628; --muted:#9fb0c7; --text:#e6edf3; --brand:#1f6feb; --ring:#2b3e66;
+      --danger:#b3261e; --ok:#2ea043; --warn:#e3b341;
+    }
+    html,body{height:100%}
+    body{margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif}
+    a{color:#58a6ff; text-decoration:none}
+    a:hover{text-decoration:underline}
+    header{display:flex; align-items:center; gap:.75rem; padding:.75rem 1rem}
+    .brand{font-weight:700; color:var(--text); text-decoration:none}
+    .brand span{color:var(--brand)}
+    .topbar{display:flex; justify-content:space-between; align-items:center; padding:.5rem 1rem; background:var(--panel); border-block:1px solid #192542}
+    .topbar .left, .topbar .right{display:flex; gap:.75rem; align-items:center; flex-wrap:wrap}
+    .container{max-width:1100px; margin:1rem auto; padding:0 1rem}
+    .flashwrap{position:relative; display:grid; gap:.5rem; margin:.5rem 0}
+    .flash{padding:.6rem .8rem; border-radius:.6rem; border:1px solid #1e2b4d; background:#0d162b}
+    .flash.success{border-color:#224d2d; background:#0e1f16}
+    .flash.error{border-color:#4d1e1e; background:#1a0f0f}
+    .flash .close{float:right; margin:-.2rem 0 0 .5rem; background:transparent; border:0; color:var(--muted); cursor:pointer}
+    .muted{color:var(--muted)}
+    .buttonlike{background:var(--brand); color:#fff; border:none; padding:.5rem .85rem; border-radius:.6rem; text-decoration:none; display:inline-flex; align-items:center; gap:.35rem}
+    .buttonlike:hover{opacity:.92; text-decoration:none}
+    .kbd{font:12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#0a1020; border:1px solid #22314a; border-radius:.4rem; padding:.15rem .35rem}
+    .progress{position:fixed; inset-block-start:0; inset-inline:0; height:2px; background:linear-gradient(90deg, var(--brand), #58a6ff); transform:scaleX(0); transform-origin:left; transition:transform .3s ease; z-index:999}
+    .progress.active{transform:scaleX(1)}
+    @media (max-width:720px){ .container{padding:0 .75rem} }
+  </style>
 </head>
 <body>
+  <div id="nprogress" class="progress" aria-hidden="true"></div>
+
   <header>
     <a class="brand" href="/">NMBC <span>Bib.io</span></a>
+    {% block header_extra %}{% endblock %}
   </header>
-  <nav class="topbar">
+
+  <nav class="topbar" role="navigation" aria-label="Primary">
     <div class="left">
       <a href="{{ url_for('dashboard') }}">🏷️ Projects</a>
+      {% block topbar_extra %}{% endblock %}
     </div>
     <div class="right">
       {% if current_user.is_authenticated %}
-        <span>{{ current_user.email }}</span>
-        <a href="{{ url_for('logout') }}">Logout</a>
+        <span class="muted">{{ current_user.email }}</span>
+        <a class="buttonlike" href="{{ url_for('logout') }}">Logout</a>
       {% else %}
-        <a href="{{ url_for('login') }}">Login</a>
+        <a class="buttonlike" href="{{ url_for('login') }}">Login</a>
       {% endif %}
     </div>
   </nav>
-  <main class="container">
+
+  <main class="container" id="main">
     {% with msgs = get_flashed_messages(with_categories=true) %}
       {% if msgs %}
-        <div class="flashwrap">
+        <div class="flashwrap" role="region" aria-live="polite">
           {% for cat, m in msgs %}
-            <div class="flash {{ cat }}">{{ m }}</div>
+            <div class="flash {{ cat }}">
+              <button class="close" aria-label="Dismiss" onclick="this.parentElement.remove()">×</button>
+              {{ m }}
+            </div>
           {% endfor %}
         </div>
       {% endif %}
     {% endwith %}
-    {% block content %}<!-- in base.html, load client from CDN -->
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
-    
-    <script>
-      // on pages that use sockets (e.g., code_workspace.html)
-      const sock = io({ transports: ["websocket"], upgrade: false }); // 👈 force WS
-      sock.emit("join_topic", { project_id: {{ project.id }}, page_id: {{ page.id }}, topic_id: {{ topic.id }} });
-      sock.on("code_output", (msg) => {
-        if (msg.topic_id !== {{ topic.id }}) return;
-        const text = String(msg.data || "");
-        appendOut(`[${msg.stream}] ${text}${text.endsWith('\n') ? '' : '\n'}`);
-      });
-      sock.on("code_done", (msg) => {
-        if (msg.topic_id !== {{ topic.id }}) return;
-        appendOut(`\n[status] process exited with code ${msg.returncode}\n`);
-      });
-    </script>
-{% endblock %}
+
+    {% block content %}{% endblock %}
   </main>
-  <script src="{{ url_for('static', filename='page.js') }}"></script>
-  <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+
+  {# Global site JS #}
   <script>
-    // Flask-SocketIO serves this path automatically; fallback local if you prefer
-    if (typeof io === 'undefined') {
-      document.write('<script src="/socket.io/socket.io.js"><\/script>');
+  // Small loading bar API
+  (function(){
+    const el = document.getElementById('nprogress');
+    let inFlight = 0, t;
+    function show(){ el.classList.add('active'); }
+    function hide(){ el.classList.remove('active'); }
+    function start(){ inFlight++; show(); if(t) clearTimeout(t); }
+    function done(){ if(inFlight>0) inFlight--; if(inFlight===0){ t=setTimeout(hide, 150); } }
+    // patch fetch to toggle bar
+    const _fetch = window.fetch;
+    window.fetch = function(){
+      start();
+      return _fetch.apply(this, arguments).finally(done);
+    };
+    window.NProgress = { start, done };
+  })();
+
+  // Global Socket helper (safe on pages that don't need sockets)
+  window.Socket = (function(){
+    let sock = null;
+    const listeners = new Map(); // event -> Set<fn>
+
+    function ensure(){
+      if (sock || typeof io === 'undefined') return sock;
+      sock = io({ transports: ["websocket"], upgrade: false });
+      // rebind listeners on connect
+      listeners.forEach((set, evt)=>{ set.forEach(fn=>sock.on(evt, fn)); });
+      return sock;
     }
+    function on(evt, fn){
+      ensure();
+      if (!listeners.has(evt)) listeners.set(evt, new Set());
+      listeners.get(evt).add(fn);
+      if (sock) sock.on(evt, fn);
+    }
+    function off(evt, fn){
+      if (!listeners.has(evt)) return;
+      listeners.get(evt).delete(fn);
+      if (sock) sock.off(evt, fn);
+    }
+    function joinProject(project_id){
+      ensure();
+      if (!sock) return;
+      sock.emit("join_project", { project_id });
+    }
+    function joinTopic(project_id, page_id, topic_id){
+      ensure();
+      if (!sock) return;
+      sock.emit("join_topic", { project_id, page_id, topic_id });
+    }
+    return { ensure, on, off, joinProject, joinTopic, get io(){ return sock; } };
+  })();
+
+  // Keyboard: jump to main with "g m"
+  (function(){
+    let seq = [];
+    window.addEventListener('keydown', (e)=>{
+      seq.push(e.key.toLowerCase());
+      if (seq.slice(-2).join(' ') === 'g m'){
+        const main = document.getElementById('main');
+        if (main) main.setAttribute('tabindex', '-1'), main.focus();
+      }
+      setTimeout(()=>seq=[], 700);
+    });
+  })();
   </script>
+
+  {# Page-specific JS (loaded after globals) #}
+  {% block footer_js %}{% endblock %}
 </body>
 </html>

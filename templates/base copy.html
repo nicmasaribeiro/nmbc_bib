@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>NMBC Bib.io</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+    integrity="sha384-mNY9gLMTJIp6n8+zK7i6ghXfI6oUvvK3dT7BlX6pXWy6+1Yl4e+I3Ao3PKW8m3D5"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">NMBC <span>Bib.io</span></a>
+  </header>
+  <nav class="topbar">
+    <div class="left">
+      <a href="{{ url_for('dashboard') }}">🏷️ Projects</a>
+    </div>
+    <div class="right">
+      {% if current_user.is_authenticated %}
+        <span>{{ current_user.email }}</span>
+        <a href="{{ url_for('logout') }}">Logout</a>
+      {% else %}
+        <a href="{{ url_for('login') }}">Login</a>
+      {% endif %}
+    </div>
+  </nav>
+  <main class="container">
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% if msgs %}
+        <div class="flashwrap">
+          {% for cat, m in msgs %}
+            <div class="flash {{ cat }}">{{ m }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}<!-- in base.html, load client from CDN -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+    
+    <script>
+      // on pages that use sockets (e.g., code_workspace.html)
+      const sock = io({ transports: ["websocket"], upgrade: false }); // 👈 force WS
+      sock.emit("join_topic", { project_id: {{ project.id }}, page_id: {{ page.id }}, topic_id: {{ topic.id }} });
+      sock.on("code_output", (msg) => {
+        if (msg.topic_id !== {{ topic.id }}) return;
+        const text = String(msg.data || "");
+        appendOut(`[${msg.stream}] ${text}${text.endsWith('\n') ? '' : '\n'}`);
+      });
+      sock.on("code_done", (msg) => {
+        if (msg.topic_id !== {{ topic.id }}) return;
+        appendOut(`\n[status] process exited with code ${msg.returncode}\n`);
+      });
+    </script>
+{% endblock %}
+  </main>
+  <script src="{{ url_for('static', filename='page.js') }}"></script>
+  <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+  <script>
+    // Flask-SocketIO serves this path automatically; fallback local if you prefer
+    if (typeof io === 'undefined') {
+      document.write('<script src="/socket.io/socket.io.js"><\/script>');
+    }
+  </script>
+</body>
+</html>

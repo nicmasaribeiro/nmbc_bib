@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+  <section class="error">
+    <h2>Error {{ code }}</h2>
+    <p>{{ message }}</p>
+    <a class="buttonlike" href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
+  </section>
+{% endblock %}

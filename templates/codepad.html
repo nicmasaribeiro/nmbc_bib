@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>{{ page.title }} · <em>Code Pad:</em> {{ topic.title }}</h2>
-<!-- at the top of the template body -->
+
+<!-- Server exec flag (read by JS to toggle the "server" option) -->
 <div id="exec-flag" data-enabled="{{ 1 if ENABLE_SERVER_EXEC else 0 }}"></div>
 
 <script>
@@ -9,16 +10,20 @@
     const flag = document.getElementById('exec-flag');
     const enabled = flag && flag.dataset.enabled === "1";
     const execModeSel = document.getElementById('exec-mode');
+    if (!execModeSel) return;
     const serverOpt = [...execModeSel.options].find(o => o.value === 'server');
-    if (enabled && serverOpt){ serverOpt.disabled = false; } // JS safety switch
+    if (enabled && serverOpt){ serverOpt.disabled = false; }
   })();
 </script>
 
 <div class="row" style="gap:8px; flex-wrap:wrap; align-items:center">
   <a class="buttonlike" href="{{ url_for('topic_view', project_id=project.id, page_id=page.id, topic_id=topic.id) }}">← Back to Topic</a>
+
   <form action="{{ url_for('codepad_cell_create', project_id=project.id, page_id=page.id, topic_id=topic.id) }}" method="post" style="margin:0">
+    {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
     <button type="submit">+ Add Cell</button>
   </form>
+
   <a class="buttonlike" id="dl-link" href="{{ url_for('topic_code_download', project_id=project.id, page_id=page.id, topic_id=topic.id) }}">Download .py</a>
 </div>
 
@@ -38,7 +43,9 @@
     <label>Mode:
       <select id="exec-mode">
         <option value="browser" {% if not server_enabled %}selected{% endif %}>Browser (Pyodide)</option>
-        <option value="server" {% if server_enabled %}selected{% endif %} {% if not server_enabled %}disabled{% endif %}>Server (venv){% if not server_enabled %} — disabled{% endif %}</option>
+        <option value="server" {% if server_enabled %}selected{% endif %} {% if not server_enabled %}disabled{% endif %}>
+          Server (venv){% if not server_enabled %} — disabled{% endif %}
+        </option>
       </select>
     </label>
     <label>Scope:
@@ -66,6 +73,7 @@
         <button type="button" onclick="saveCell({{ c.id }})">Save</button>
         <form action="{{ url_for('codecell_delete', project_id=project.id, page_id=page.id, topic_id=topic.id, cell_id=c.id) }}"
               method="post" style="margin:0" onsubmit="return confirm('Delete this cell?')">
+          {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
           <button>Delete</button>
         </form>
       </div>
@@ -92,17 +100,16 @@
   .code-cell.active { outline:2px solid #1f6feb; border-radius:16px; }
 </style>
 
-<!-- CodeMirror core + theme -->
+<!-- CodeMirror -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/darcula.css">
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.js"></script>
-<!-- IMPORTANT: addons for options we use -->
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/closebrackets.js"></script>
 
-<!-- Socket.IO (load if not already provided by base.html) -->
+<!-- Socket.IO (load if not already available) -->
 <script>
 if(!window.io){
   var s=document.createElement('script');
@@ -132,12 +139,34 @@ sys.stdout = _W()
 sys.stderr = _W()
       `);
     }
-    // keep packages light; add more on demand
     return py;
   })();
 </script>
 
+<!-- Safe CSRF exposure -->
+{% if csrf_token is defined %}
+<script>const CSRF = "{{ csrf_token() }}";</script>
+{% else %}
+<script>const CSRF = "";</script>
+{% endif %}
+
 <script>
+// === Pyodide package loader ===
+const PKG_MAP = { numpy: "numpy", pandas: "pandas", matplotlib: "matplotlib" };
+
+function detectPackages(code){
+  const needed = new Set();
+  const re = /^\s*(?:from|import)\s+([a-zA-Z0-9_]+)/gm;
+  let m; while ((m = re.exec(code)) !== null) { const lib = m[1]; if (PKG_MAP[lib]) needed.add(PKG_MAP[lib]); }
+  return [...needed];
+}
+
+async function ensurePackages(code){
+  const py = await pyodideReady;
+  const pkgs = detectPackages(code);
+  for (const p of pkgs){ await py.loadPackage(p); }
+}
+
 (function(){
   // Elements
   const consoleEl = document.getElementById('console');
@@ -152,7 +181,6 @@ sys.stderr = _W()
   const dlLink      = document.getElementById('dl-link');
   const banner      = document.getElementById('exec-disabled-banner');
   const SERVER_ENABLED = {{ 'true' if server_enabled else 'false' }};
-  const CSRF = {{ 'csrf_token()' in globals() and csrf_token() and ('"%s"' % csrf_token()) or '""' }};
 
   // Console helpers
   function appendOut(t){ consoleEl.textContent += t; consoleEl.scrollTop = consoleEl.scrollHeight; }
@@ -194,7 +222,7 @@ sys.stderr = _W()
       method:"POST",
       headers:{"Content-Type":"application/x-www-form-urlencoded", ...(CSRF ? {'X-CSRFToken': CSRF} : {})},
       body:new URLSearchParams({code})
-    }).then(r=>r.json()).then(_=>{ setStatus('Saved cell #'+id); });
+    }).then(r=>r.json()).then(_=>{ setStatus('Saved cell #'+id); }).catch(()=>setStatus('Save failed'));
   };
 
   // Download link reflects language
@@ -222,8 +250,8 @@ sys.stderr = _W()
     }
   });
 
-  // Run/Stop control
-  let sock = null;  // socket will be created lazily
+  // Socket (lazy)
+  let sock = null;
   function ensureSocket(){
     if (sock || !window.io) return;
     sock = io({ transports: ["websocket"], upgrade: false });
@@ -241,6 +269,7 @@ sys.stderr = _W()
     });
   }
 
+  // Run/Stop
   runBtn.onclick = async ()=>{
     clearOut(); runBtn.disabled = true; stopBtn.disabled = false;
     const mode = execModeSel.value, scope = execScopeSel.value, lang = langSel.value;
@@ -251,7 +280,7 @@ sys.stderr = _W()
     try{
       if (mode==='browser'){ await runBrowser(code); }
       else { await runServer(code, lang); ensureSocket(); }
-    } finally { /* keep disabled; re-enabled by code_done or error */ }
+    } finally { /* re-enabled by code_done or error */ }
   };
 
   stopBtn.onclick = ()=>{
@@ -267,6 +296,9 @@ sys.stderr = _W()
   async function runBrowser(code){
     try{
       const py = await pyodideReady;
+      // NEW: auto-load packages used by the code (numpy/pandas/matplotlib)
+      await ensurePackages(code);
+
       appendOut('[browser] Running in Pyodide…\n');
       const res = await py.runPythonAsync(code);
       if (typeof res !== 'undefined') appendOut(String(res)+'\n');
@@ -275,25 +307,31 @@ sys.stderr = _W()
     }catch(e){ appendOut(String(e)+'\n'); setStatus('Error'); done(); }
   }
 
-    async function runServer(code, lang){
-      {% if not ENABLE_SERVER_EXEC %}
+  async function runServer(code, lang){
+    {% if not ENABLE_SERVER_EXEC %}
       appendOut('[server] Disabled. Ask owner to enable server execution.\n');
-      setStatus('Disabled'); return;
-      {% endif %}
-      // otherwise proceed to POST to your exec route...
-    }
-
-    let body, text;
-    if (!r.ok){
-      try { body = await r.json(); } catch { text = await r.text(); }
-      appendOut('Error: ' + ((body && (body.error||body.detail)) || text || r.statusText) + '\n');
-      setStatus('Failed'); done(); return;
-    }
-    // Optional: read job id to attach if your backend returns it
-    try { body = await r.json(); } catch {}
-    appendOut('Started. Streaming output…\n');
-    setStatus('Running on server');
-    // runBtn will be re-enabled when we get code_done over the socket.
+      setStatus('Disabled'); done(); return;
+    {% else %}
+      try{
+        const r = await fetch("{{ url_for('topic_run', project_id=project.id, page_id=page.id, topic_id=topic.id) }}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(CSRF ? {'X-CSRFToken': CSRF} : {}) },
+          body: JSON.stringify({ lang, code })
+        });
+        if (!r.ok){
+          let msg = '';
+          try { const j = await r.json(); msg = j.error || j.detail || ''; } catch { msg = await r.text(); }
+          appendOut('Error: ' + (msg || r.statusText) + '\n');
+          setStatus('Failed'); done(); return;
+        }
+        appendOut('Started. Streaming output…\n');
+        setStatus('Running on server');
+        // When complete, backend should emit "code_done" via socket (handled above)
+      } catch (e){
+        appendOut('Network error: ' + String(e) + '\n');
+        setStatus('Failed'); done();
+      }
+    {% endif %}
   }
 
   // Init
