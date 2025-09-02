@@ -47,6 +47,9 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import relationship, backref
 
+ROLE_OWNER = "owner"
+ROLE_EDITOR = "editor"
+ROLE_VIEWER = "viewer"
 
 
 # -------------------------
@@ -90,8 +93,7 @@ def inject_flags():
 
 BLOB_DIR = os.environ.get("BLOB_DIR", os.path.join(app.instance_path, "blobs"))
 os.makedirs(BLOB_DIR, exist_ok=True)
-# Optional: instance/config.py for overrides
-# # app.config.from_pyfile("config.py", silent=True)
+
 ENABLE_SERVER_EXEC = os.environ.get("ENABLE_SERVER_EXEC", "0") == "1"
 MAX_EXEC_SECONDS = int(os.environ.get("MAX_EXEC_SECONDS", "8"))
 MAX_EXEC_MEMORY_MB = int(os.environ.get("MAX_EXEC_MEMORY_MB", "256"))
@@ -501,6 +503,10 @@ def logout():
 # Helpers
 # -------------------------
 
+def can_edit(contrib):
+    """Return True if this contributor has edit privileges."""
+    return contrib.role in ("owner", "editor")
+
 def spawn_with_pty(cmd, cwd=None):
     """Start a process attached to a PTY; return (pid, master_fd)."""
     pid, master_fd = pty.fork()
@@ -870,6 +876,7 @@ def require_project_member(project_id: int):
         m = s.scalar(select(Membership).where(Membership.project_id == project_id, Membership.user_id == current_user.id))
         if not m: abort(403)
         return proj
+
 def require_project_owner(project_id: int):
     if not current_user.is_authenticated:
         abort(403)
@@ -885,9 +892,32 @@ def require_project_owner(project_id: int):
 # -------------------------
 # Views
 # -------------------------
-from flask import send_file
+@app.route("/project/<int:project_id>/edit", methods=["POST"])
+@login_required
+def project_edit(project_id):
+    require_project_editor(project_id)
+    project = db.session.get(Project, project_id)
+    contrib = project.get_contrib(current_user.id)
+    if not contrib or not can_edit(contrib):
+        abort(403, "You do not have permission to edit this project.")
 
-from flask import send_file, abort
+    # proceed with edit...
+    project.title = request.form["title"]
+    db.session.commit()
+    return redirect(url_for("project_view", project_id=project.id))
+
+@app.route("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/edit", methods=["POST"])
+@login_required
+def topic_edit(project_id, page_id, topic_id):
+    require_project_editor(project_id)
+    topic = db.session.get(Topic, topic_id)
+    contrib = topic.page.project.get_contrib(current_user.id)
+    if not contrib or not can_edit(contrib):
+        abort(403)
+
+    topic.content_md = request.form["content"]
+    db.session.commit()
+    return redirect(url_for("topic_view", project_id=project_id, page_id=page_id, topic_id=topic.id))
 
 @app.get("/blob/<int:blob_id>")
 @login_required
@@ -997,49 +1027,69 @@ def topic_export_pdf(project_id, page_id, topic_id):
         mimetype="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'}
     )
-
 @app.post("/project/<int:project_id>/page/<int:page_id>/delete")
 @login_required
-def page_delete(project_id: int, page_id: int):
-    require_project_editor(project_id)
+def page_delete(project_id, page_id):
+    # require_project_owner_or_editor(project_id)
 
     with SessionLocal() as s:
-        page = s.execute(
-            select(Page)
-            .where(Page.id == page_id, Page.project_id == project_id)
-            .options(
-                selectinload(Page.topics).selectinload(Topic.codecells),
-                selectinload(Page.attachments),
-                selectinload(Page.annotations)
-            )
-        ).scalar_one_or_none()
-        if not page:
+        page = s.get(Page, page_id)
+        if not page or page.project_id != project_id:
             abort(404)
 
-        topic_ids = [t.id for t in page.topics]
-        cell_ids  = [c.id for t in page.topics for c in t.codecells]
-
-        # Delete children first
-        if cell_ids:
-            s.execute(delete(TopicCodeCell).where(TopicCodeCell.id.in_(cell_ids)))
-        if topic_ids:
-            s.execute(delete(Topic).where(Topic.id.in_(topic_ids)))
-
-        s.execute(delete(Attachment).where(Attachment.page_id == page_id))
-        s.execute(delete(Annotation).where(Annotation.page_id == page_id))
-        # s.execute(delete(Citation).where(Citation.page_id == page_id))
-
-        # Delete page
-        s.execute(delete(Page).where(Page.id == page_id))
+        # If you defined relationships with cascade="all, delete-orphan"
+        # this is enough:
+        s.delete(page)
         s.commit()
 
-    try:
-        socketio.emit("page_deleted", {"project_id": project_id, "page_id": page_id}, to=f"project:{project_id}")
-    except Exception:
-        pass
-
-    flash("Page deleted.", "success")
+    flash("Page deleted", "success")
     return redirect(url_for("project_view", project_id=project_id))
+
+# @app.post("/project/<int:project_id>/page/<int:page_id>/delete")
+# @login_required
+# def page_delete(project_id: int, page_id: int):
+#     require_project_editor(project_id)
+
+#     with SessionLocal() as s:
+#         page = s.execute(
+#             select(Page)
+#             .where(Page.id == page_id, Page.project_id == project_id)
+#             .options(
+#                 selectinload(Page.topics).selectinload(Topic.codecells),
+#                 selectinload(Page.attachments),
+#                 selectinload(Page.annotations)
+#             )
+#         ).scalar_one_or_none()
+#         if not page:
+#             abort(404)
+
+#         topic_ids = [t.id for t in page.topics]
+#         cell_ids  = [c.id for t in page.topics for c in t.codecells]
+
+#         # Delete children first
+#         if cell_ids:
+#             s.execute(delete(TopicCodeCell).where(TopicCodeCell.id.in_(cell_ids)))
+#         if topic_ids:
+#             s.execute(delete(Topic).where(Topic.id.in_(topic_ids)))
+
+#         s.execute(delete(Attachment).where(Attachment.page_id == page_id))
+#         s.execute(delete(Annotation).where(Annotation.page_id == page_id))
+#         # s.execute(delete(Citation).where(Citation.page_id == page_id))
+
+#         # Delete page
+#         s.execute(delete(Page).where(Page.id == page_id))
+#         s.commit()
+
+#     try:
+#         socketio.emit("page_deleted", {"project_id": project_id, "page_id": page_id}, to=f"project:{project_id}")
+#     except Exception:
+#         pass
+
+#     flash("Page deleted.", "success")
+#     return redirect(url_for("project_view", project_id=project_id))
+
+from sqlalchemy import select, update, delete, func
+
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/delete")
 @login_required
 def topic_delete(project_id: int, page_id: int, topic_id: int):
@@ -1098,7 +1148,7 @@ def dashboard():
 @login_required
 def page_rename(project_id, page_id):
     # Any project member can rename pages; change to require_project_owner if you want owner-only
-    require_project_member(project_id)
+    require_project_editor(project_id)
     new_title = (request.form.get("title") or "").strip()
     if not new_title:
         flash("Title cannot be empty.", "error")
@@ -1220,7 +1270,8 @@ def project_view(project_id):
 @app.route("/project/<int:project_id>/invite", methods=["POST"])
 @login_required
 def project_invite(project_id):
-    proj = require_project_member(project_id)
+    # proj = require_project_member(project_id)
+    require_project_editor(project_id=project_id)
     email = request.form["email"].strip().lower()
     with Session(engine) as s:
         u = s.scalar(select(User).where(User.email == email))
@@ -1240,7 +1291,7 @@ def project_invite(project_id):
 @app.route("/project/<int:project_id>/page/create", methods=["POST"])
 @login_required
 def page_create(project_id):
-    proj = require_project_member(project_id)
+    proj = require_project_editor(project_id)
     title = request.form.get("title", "Untitled").strip() or "Untitled"
     with Session(engine) as s:
         page = Page(project_id=project_id, title=title, content_html="")
@@ -1302,8 +1353,7 @@ from werkzeug.utils import secure_filename
 @app.post("/project/<int:project_id>/page/<int:page_id>/upload")
 @login_required
 def upload(project_id, page_id):
-    require_project_member(project_id)
-
+    require_project_editor(project_id)
     file = request.files.get("file")
     label = (request.form.get("label") or "").strip()
 
@@ -1339,7 +1389,8 @@ def serve_blob(sha_prefix, sha):
 @app.post("/project/<int:project_id>/page/<int:page_id>/annotate")
 @login_required
 def annotate(project_id, page_id):
-    proj = require_project_member(project_id)
+    proj = require_project_editor(project_id)
+    
     text = request.form.get("text", "").strip()
     if not text: return redirect(url_for("page_view", project_id=project_id, page_id=page_id))
     with Session(engine) as s:
@@ -1352,7 +1403,7 @@ def annotate(project_id, page_id):
 @login_required
 def save_html(project_id, page_id):
     # Used by Socket events or fallback POST to persist the condensed UI content
-    proj = require_project_member(project_id)
+    proj = require_project_editor(project_id)
     content_html = request.form.get("content_html", "")
     client_rev = int(request.form.get("revision", "0"))
     with Session(engine) as s:
@@ -1371,7 +1422,7 @@ def save_html(project_id, page_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/create")
 @login_required
 def topic_create(project_id, page_id):
-    require_project_member(project_id)
+    require_project_editor(project_id)
     title = (request.form.get("title") or "New topic").strip()
     with SessionLocal() as s:
         page = s.scalar(select(Page).where(Page.id == page_id, Page.project_id == project_id))
@@ -1432,7 +1483,8 @@ def topic_view(project_id, page_id, topic_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/save")
 @login_required
 def topic_save(project_id, page_id, topic_id):
-    require_project_member(project_id)
+    # require_project_member(project_id)
+    require_project_editor(project_id=project_id)
     md = request.form.get("content_md", "")
     client_rev = int(request.form.get("revision", "0"))
     with SessionLocal() as s:
@@ -1451,7 +1503,7 @@ def topic_save(project_id, page_id, topic_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/upload")
 @login_required
 def topic_upload(project_id, page_id, topic_id):
-    require_project_member(project_id)
+    require_project_editor(project_id)
     file = request.files.get("file")
     label = (request.form.get("label") or "").strip()
     if not file or not allowed_file(file.filename):
@@ -1514,7 +1566,7 @@ def topics_reorder(project_id, page_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/save_md")
 @login_required
 def topic_save_md(project_id, page_id, topic_id):
-    require_project_member(project_id)
+    require_project_editor(project_id)
     md = request.form.get("content_md", "")
     client_rev = int(request.form.get("revision", "0"))
     with SessionLocal() as s:
@@ -1533,7 +1585,7 @@ def topic_save_md(project_id, page_id, topic_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/annotate")
 @login_required
 def topic_annotate(project_id, page_id, topic_id):
-    require_project_member(project_id)
+    require_project_editor(project_id)
     text = (request.form.get("text") or "").strip()
     if not text:
         return redirect(url_for("topic_view", project_id=project_id, page_id=page_id, topic_id=topic_id))
@@ -1546,7 +1598,8 @@ def topic_annotate(project_id, page_id, topic_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/codecell/create")
 @login_required
 def codecell_create(project_id, page_id, topic_id):
-    require_project_member(project_id)
+    # require_project_member(project_id)
+    require_project_editor(project_id=project_id)
     with SessionLocal() as s:
         max_idx = s.scalar(select(func.coalesce(func.max(TopicCodeCell.order_index), -1)).where(TopicCodeCell.topic_id == topic_id))
         cc = TopicCodeCell(topic_id=topic_id, order_index=(max_idx + 1), code="")
@@ -1558,7 +1611,8 @@ def codecell_create(project_id, page_id, topic_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/codecell/<int:cell_id>/save")
 @login_required
 def codecell_save(project_id, page_id, topic_id, cell_id):
-    require_project_member(project_id)
+    # require_project_member(project_id)
+    require_project_editor(project_id)
     code = request.form.get("code", "")
     with SessionLocal() as s:
         cc = s.get(TopicCodeCell, cell_id)
@@ -1571,7 +1625,7 @@ def codecell_save(project_id, page_id, topic_id, cell_id):
 @app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/codecell/<int:cell_id>/delete")
 @login_required
 def codecell_delete(project_id, page_id, topic_id, cell_id):
-    require_project_member(project_id)
+    require_project_editor(project_id)
     with SessionLocal() as s:
         cc = s.get(TopicCodeCell, cell_id)
         if not cc or cc.topic_id != topic_id: abort(404)
@@ -1635,6 +1689,58 @@ def exec_server_code(project_id, page_id, topic_id):
 
     # immediate OK so the client can show "Started. Streaming…"
     return jsonify({"status": "started"})
+
+
+@app.post("/project/<int:project_id>/page/<int:page_id>/topic/<int:topic_id>/rename")
+@login_required
+def topic_rename(project_id: int, page_id: int, topic_id: int):
+    """
+    Rename a topic. Accepts form-encoded or JSON:
+      - form:    title=<new title>
+      - json:    {"title": "..."}
+    Returns JSON if the request is AJAX/JSON; otherwise redirects back to the topic page.
+    """
+    require_project_editor(project_id)
+
+    # get payload
+    new_title = (request.form.get("title")
+                 or (request.is_json and (request.get_json(silent=True) or {}).get("title"))
+                 or "").strip()
+
+    if not new_title:
+        # for JSON callers
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"error": "title is required"}), 400
+        # for form callers
+        return redirect(url_for("topic_view", project_id=project_id, page_id=page_id, topic_id=topic_id))
+
+    with SessionLocal() as s:
+        topic = s.execute(
+            select(Topic).where(Topic.id == topic_id, Topic.page_id == page_id)
+        ).scalar_one_or_none()
+        if not topic:
+            abort(404)
+
+        old_title = topic.title
+        topic.title = new_title
+        s.commit()
+
+    # notify collaborators in the project room (optional)
+    try:
+        socketio.emit(
+            "topic_renamed",
+            {"project_id": project_id, "page_id": page_id, "topic_id": topic_id,
+             "old_title": old_title, "new_title": new_title},
+            to=f"project:{project_id}",
+        )
+    except Exception:
+        pass
+
+    # JSON for AJAX; redirect for regular form
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({"ok": True, "title": new_title})
+
+    return redirect(url_for("topic_view", project_id=project_id, page_id=page_id, topic_id=topic_id))
 
 
 @app.post("/project/<int:project_id>/toggle_server_exec")
@@ -1898,7 +2004,8 @@ def fmt_bibtex(b: BibEntry) -> str:
 @app.post("/project/<int:project_id>/citations/add")
 @login_required
 def citation_add(project_id):
-    proj = require_project_member(project_id)
+    proj = require_project_editor(project_id)
+    # require_project_editor(project_id)
     f = request.form
     page_id = request.form.get("page_id")
     page_id = int(page_id) if page_id else None
@@ -2083,7 +2190,7 @@ def on_page_update(data):
     html = data.get("content_html", "")
     client_rev = int(data.get("revision", 0))
     if not current_user.is_authenticated: return
-    try: require_project_member(project_id)
+    try: require_project_editor(project_id)
     except: return
     with Session(engine) as s:
         page = s.get(Page, page_id)
@@ -2124,7 +2231,7 @@ def on_topic_update(data):
     if not current_user.is_authenticated:
         return
     try:
-        require_project_member(project_id)
+        require_project_editor(project_id)
     except:
         return
     with SessionLocal() as s:
@@ -2143,6 +2250,25 @@ def on_topic_update(data):
 # -------------------------
 # Minimal pages/templates
 # -------------------------
+# app.py
+from flask_wtf.csrf import generate_csrf
+
+@app.context_processor
+def inject_csrf():
+    return dict(csrf_token=generate_csrf)
+
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template("error.html", code=403, message="You don’t have permission to do that."), 403
+
+@app.errorhandler(404)
+def not_found(e):
+    return render_template("error.html", code=404, message="The page you requested was not found."), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return render_template("error.html", code=500, message="Something went wrong on our side."), 500
+
 @app.route("/about")
 def about():
     return "Bibliography Tool — collaborative, condensed research pages."
